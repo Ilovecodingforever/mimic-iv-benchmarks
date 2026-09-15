@@ -44,6 +44,10 @@ def main():
         assert(len(stays_df['ICUSTAY_ID'].unique()) == len(stays_df['ICUSTAY_ID']))
         assert(len(stays_df['HADM_ID'].unique()) == len(stays_df['HADM_ID']))
 
+        events_path = os.path.join(args.subjects_root_path, subject, 'events.csv')
+        if not os.path.exists(events_path):
+            continue
+
         events_df = pd.read_csv(os.path.join(args.subjects_root_path, subject, 'events.csv'), index_col=False,
                                 dtype={'HADM_ID': str, "ICUSTAY_ID": str})
         events_df.columns = events_df.columns.str.upper()

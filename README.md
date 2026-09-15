@@ -54,29 +54,47 @@ Here are the required steps to build the benchmark. It assumes that you already 
        git clone https://github.com/vincenzorusso12/mimic4-benchmarks/
        cd mimic4-benchmarks/
     
+
+
+
+python mimic-iv/prepare_mimic4_russo.py \
+    /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0 \
+    /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/vincenzorusso3-mimic-iv-benchmarks
+
+
+
+
+
+
 2. The following command takes MIMIC-IV CSVs, generates one directory per `SUBJECT_ID` and writes ICU stay information to `data/{SUBJECT_ID}/stays.csv`, diagnoses to `data/{SUBJECT_ID}/diagnoses.csv`, and events to `data/{SUBJECT_ID}/events.csv`. This step might take around an hour.
 
-       python -m mimic4benchmark.scripts.extract_subjects ./mimic-iv data/root/
+       python -m mimic4benchmark.scripts.extract_subjects /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/vincenzorusso3-mimic-iv-benchmarks /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/root/
+
+
 
 3. The following command attempts to fix some issues (ICU stay ID is missing) and removes the events that have missing information. About 80% of events remain after removing all suspicious rows (more information can be found in [`mimic4benchmark/scripts/more_on_validating_events.md`](mimic4benchmark/scripts/more_on_validating_events.md)).
 
-       python -m mimic4benchmark.scripts.validate_events data/root/
+       python -m mimic4benchmark.scripts.validate_events /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/root/
 
 4. The next command breaks up per-subject data into separate episodes (pertaining to ICU stays). Time series of events are stored in ```{SUBJECT_ID}/episode{#}_timeseries.csv``` (where # counts distinct episodes) while episode-level information (patient age, gender, ethnicity, height, weight) and outcomes (mortality, length of stay, diagnoses) are stores in ```{SUBJECT_ID}/episode{#}.csv```. This script requires two files, one that maps event ITEMIDs to clinical variables and another that defines valid ranges for clinical variables (for detecting outliers, etc.). **Outlier detection is disabled in the current version**.
 
-       python -m mimic4benchmark.scripts.extract_episodes_from_subjects data/root/
+       python -m mimic4benchmark.scripts.extract_episodes_from_subjects /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/root/
 
 5. The next command splits the whole dataset into training and testing sets. Note that the train/test split is the same of all tasks.
 
-       python -m mimic4benchmark.scripts.split_train_and_test data/root/
+       python -m mimic4benchmark.scripts.split_train_and_test /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/root/
 	
 6. The following commands will generate task-specific datasets, which can later be used in models. These commands are independent, if you are going to work only on one benchmark task, you can run only the corresponding command.
 
-       python -m mimic4benchmark.scripts.create_in_hospital_mortality data/root/ data/in-hospital-mortality/
-       python -m mimic4benchmark.scripts.create_decompensation data/root/ data/decompensation/
-       python -m mimic4benchmark.scripts.create_length_of_stay data/root/ data/length-of-stay/
-       python -m mimic4benchmark.scripts.create_phenotyping data/root/ data/phenotyping/
-       python -m mimic4benchmark.scripts.create_multitask data/root/ data/multitask/
+       python -m mimic4benchmark.scripts.create_in_hospital_mortality /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/root/ /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/in-hospital-mortality/
+
+       python -m mimic4benchmark.scripts.create_decompensation /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/root/ /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/decompensation/
+
+       python -m mimic4benchmark.scripts.create_length_of_stay /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/root/ /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay/
+
+       python -m mimic4benchmark.scripts.create_phenotyping /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/root/ /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/phenotyping/
+
+       python -m mimic4benchmark.scripts.create_multitask /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/root/ /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/multitask/
 
 After the above commands are done, there will be a directory `data/{task}` for each created benchmark task.
 These directories have two sub-directories: `train` and `test`.
@@ -84,6 +102,37 @@ Each of them contains bunch of ICU stays and one file with name `listfile.csv`, 
 Each row of `listfile.csv` has the following form: `icu_stay, period_length, label(s)`.
 A row specifies a sample for which the input is the collection of ICU event of `icu_stay` that occurred in the first `period_length` hours of the stay and the target is/are `label(s)`.
 In in-hospital mortality prediction task `period_length` is always 48 hours, so it is not listed in corresponding listfiles.
+
+
+python -m mimic4models.split_train_val /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/in-hospital-mortality/
+
+# 1. Build 8h normalization statistics
+python -m mimic4models.create_normalizer_state \
+  --task ihm \
+  --timestep 8.0 \
+  --impute_strategy previous \
+  --start_time zero \
+  --store_masks \
+  --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/in-hospital-mortality/ \
+  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers/
+
+# 2. Train 8h LSTM
+python -um mimic4models.in_hospital_mortality.main \
+  --network mimic4models/keras_models/lstm.py \
+  --dim 16 \
+  --timestep 8.0 \
+  --depth 2 \
+  --dropout 0.3 \
+  --mode train \
+  --batch_size 8 \
+  --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/in-hospital-mortality/ \
+  --normalizer_state /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers/ihm_ts:8.00_impute:previous_start:zero_masks:True_n:15579.normalizer \
+  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/8h
+
+
+
+
+
 
 
 ## Readers
