@@ -16,6 +16,7 @@ from mimic4models.preprocessing import Discretizer, Normalizer
 
 
 HORIZONS = FixedHorizonIcuExitReader.VALID_HORIZONS
+DEFAULT_NORMALIZER_DIR = '/heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers/'
 
 
 def build_reader(data_dir, split, horizon):
@@ -46,6 +47,12 @@ def validate_data(data_dir):
         validate_split(data_dir, split)
 
 
+def default_normalizer_state_path(normalizer_dir, timestep, imputation, n_examples):
+    file_name = 'fixed_horizon_icu_exit_ts:{:.2f}_impute:{}_start:zero_masks:True_n:{}.normalizer'.format(
+        timestep, imputation, n_examples)
+    return os.path.join(normalizer_dir, file_name)
+
+
 def print_stats(data_dir):
     validate_data(data_dir)
     for split in ('train', 'val', 'test'):
@@ -71,6 +78,8 @@ def main():
                         default=os.path.join(os.path.dirname(__file__), '../../data/length-of-stay/'))
     parser.add_argument('--output_dir', type=str, help='Directory relative which all output files are stored',
                         default='.')
+    parser.add_argument('--normalizer_dir', type=str, default=DEFAULT_NORMALIZER_DIR,
+                        help='Directory containing fixed-horizon ICU-exit normalizer states.')
     parser.add_argument('--seed', type=int, default=49297)
     parser.add_argument('--print_stats', action='store_true',
                         help='Print fixed-24h cohort counts and prevalence for every horizon, then exit.')
@@ -118,9 +127,10 @@ def main():
     normalizer = Normalizer(fields=cont_channels)
     normalizer_state = args.normalizer_state
     if normalizer_state is None:
-        normalizer_state = 'fixed_horizon_icu_exit_ts:{:.2f}_impute:{}_start:zero_masks:True_n:{}.normalizer'.format(
-            args.timestep, args.imputation, train_reader.get_number_of_examples())
-        normalizer_state = os.path.join(os.path.dirname(__file__), normalizer_state)
+        normalizer_state = default_normalizer_state_path(
+            args.normalizer_dir, args.timestep, args.imputation, train_reader.get_number_of_examples())
+    if not os.path.exists(normalizer_state):
+        raise IOError('Normalizer state file does not exist: {}'.format(normalizer_state))
     normalizer.load_params(normalizer_state)
 
     args_dict = dict(args._get_kwargs())
