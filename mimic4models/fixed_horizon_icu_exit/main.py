@@ -1,0 +1,239 @@
+from __future__ import absolute_import
+from __future__ import print_function
+
+import argparse
+import imp
+import os
+import random
+import re
+
+import numpy as np
+from mimic4benchmark.readers import FixedHorizonIcuExitReader
+from mimic4models import common_utils
+from mimic4models import metrics
+from mimic4models.in_hospital_mortality import utils
+from mimic4models.preprocessing import Discretizer, Normalizer
+
+
+HORIZONS = FixedHorizonIcuExitReader.VALID_HORIZONS
+
+
+def build_reader(data_dir, split, horizon):
+    if split == 'test':
+        dataset_dir = os.path.join(data_dir, 'test')
+        listfile = os.path.join(data_dir, 'test_listfile.csv')
+    else:
+        dataset_dir = os.path.join(data_dir, 'train')
+        listfile = os.path.join(data_dir, '{}_listfile.csv'.format(split))
+    return FixedHorizonIcuExitReader(dataset_dir=dataset_dir, listfile=listfile, horizon=horizon)
+
+
+def validate_split(data_dir, split):
+    readers = [build_reader(data_dir, split, horizon) for horizon in HORIZONS]
+    names = readers[0].get_stay_names()
+    for reader in readers[1:]:
+        if reader.get_stay_names() != names:
+            raise AssertionError('Horizon readers do not use the same stay set for {}.'.format(split))
+    labels_by_horizon = [reader.get_labels() for reader in readers]
+    for stay_i, labels in enumerate(zip(*labels_by_horizon)):
+        if list(labels) != sorted(labels):
+            raise AssertionError('Labels are not monotonic for {} row {}.'.format(split, stay_i))
+    return readers
+
+
+def validate_data(data_dir):
+    for split in ('train', 'val', 'test'):
+        validate_split(data_dir, split)
+
+
+def print_stats(data_dir):
+    validate_data(data_dir)
+    for split in ('train', 'val', 'test'):
+        print('\n{}:'.format(split))
+        for horizon in HORIZONS:
+            reader = build_reader(data_dir, split, horizon)
+            labels = np.array(reader.get_labels(), dtype=int)
+            positives = int(labels.sum())
+            total = int(labels.shape[0])
+            prevalence = float(positives) / total if total else 0.0
+            print('  horizon={:>3}h n={} positives={} prevalence={:.6f}'.format(
+                horizon, total, positives, prevalence))
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    common_utils.add_common_arguments(parser)
+    parser.add_argument('--horizon', type=int, default=24,
+                        choices=HORIZONS,
+                        help='Prediction horizon in hours.')
+    parser.add_argument('--target_repl_coef', type=float, default=0.0)
+    parser.add_argument('--data', type=str, help='Path to the existing length-of-stay task data',
+                        default=os.path.join(os.path.dirname(__file__), '../../data/length-of-stay/'))
+    parser.add_argument('--output_dir', type=str, help='Directory relative which all output files are stored',
+                        default='.')
+    parser.add_argument('--seed', type=int, default=49297)
+    parser.add_argument('--print_stats', action='store_true',
+                        help='Print fixed-24h cohort counts and prevalence for every horizon, then exit.')
+    for action in parser._actions:
+        if action.dest == 'network':
+            action.required = False
+
+    args = parser.parse_args()
+
+    if not args.print_stats and args.network is None:
+        parser.error('--network is required unless --print_stats is used')
+
+    print(args)
+
+    if args.print_stats:
+        print_stats(args.data)
+        return
+
+    import tensorflow as tf
+    from keras.callbacks import CSVLogger, ModelCheckpoint
+    from mimic4models import keras_utils
+
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    tf.set_random_seed(args.seed)
+
+    validate_data(args.data)
+
+    if args.small_part:
+        args.save_every = 2**30
+
+    target_repl = (args.target_repl_coef > 0.0 and args.mode == 'train')
+
+    train_reader = build_reader(args.data, 'train', args.horizon)
+    val_reader = build_reader(args.data, 'val', args.horizon)
+
+    discretizer = Discretizer(timestep=float(args.timestep),
+                              store_masks=True,
+                              impute_strategy='previous',
+                              start_time='zero')
+
+    discretizer_header = discretizer.transform(train_reader.read_example(0)["X"])[1].split(',')
+    cont_channels = [i for (i, x) in enumerate(discretizer_header) if x.find("->") == -1]
+
+    normalizer = Normalizer(fields=cont_channels)
+    normalizer_state = args.normalizer_state
+    if normalizer_state is None:
+        normalizer_state = 'fixed_horizon_icu_exit_ts:{:.2f}_impute:{}_start:zero_masks:True_n:{}.normalizer'.format(
+            args.timestep, args.imputation, train_reader.get_number_of_examples())
+        normalizer_state = os.path.join(os.path.dirname(__file__), normalizer_state)
+    normalizer.load_params(normalizer_state)
+
+    args_dict = dict(args._get_kwargs())
+    args_dict['header'] = discretizer_header
+    args_dict['task'] = 'ihm'
+    args_dict['target_repl'] = target_repl
+
+    print("==> using model {}".format(args.network))
+    model_module = imp.load_source(os.path.basename(args.network), args.network)
+    model = model_module.Network(**args_dict)
+    suffix = ".h{}.bs{}{}{}.ts{}{}.seed{}".format(args.horizon,
+                                                     args.batch_size,
+                                                     ".L1{}".format(args.l1) if args.l1 > 0 else "",
+                                                     ".L2{}".format(args.l2) if args.l2 > 0 else "",
+                                                     args.timestep,
+                                                     ".trc{}".format(args.target_repl_coef) if args.target_repl_coef > 0 else "",
+                                                     args.seed)
+    model.final_name = args.prefix + model.say_name() + suffix
+    print("==> model.final_name:", model.final_name)
+
+    print("==> compiling the model")
+    optimizer_config = {'class_name': args.optimizer,
+                        'config': {'lr': args.lr,
+                                   'beta_1': args.beta_1}}
+
+    if target_repl:
+        loss = ['binary_crossentropy'] * 2
+        loss_weights = [1 - args.target_repl_coef, args.target_repl_coef]
+    else:
+        loss = 'binary_crossentropy'
+        loss_weights = None
+
+    model.compile(optimizer=optimizer_config,
+                  loss=loss,
+                  loss_weights=loss_weights)
+    model.summary()
+
+    n_trained_chunks = 0
+    if args.load_state != "":
+        model.load_weights(args.load_state)
+        n_trained_chunks = int(re.match(".*epoch([0-9]+).*", args.load_state).group(1))
+
+    train_raw = utils.load_data(train_reader, discretizer, normalizer, args.small_part)
+    val_raw = utils.load_data(val_reader, discretizer, normalizer, args.small_part)
+
+    if target_repl:
+        T = train_raw[0][0].shape[0]
+
+        def extend_labels(data):
+            data = list(data)
+            labels = np.array(data[1])
+            data[1] = [labels, None]
+            data[1][1] = np.expand_dims(labels, axis=-1).repeat(T, axis=1)
+            data[1][1] = np.expand_dims(data[1][1], axis=-1)
+            return data
+
+        train_raw = extend_labels(train_raw)
+        val_raw = extend_labels(val_raw)
+
+    if args.mode == 'train':
+        path = os.path.join(args.output_dir, 'keras_states/' + model.final_name + '.epoch{epoch}.test{val_loss}.state')
+
+        metrics_callback = keras_utils.InHospitalMortalityMetrics(train_data=train_raw,
+                                                                  val_data=val_raw,
+                                                                  target_repl=(args.target_repl_coef > 0),
+                                                                  batch_size=args.batch_size,
+                                                                  verbose=args.verbose)
+        dirname = os.path.dirname(path)
+        if not os.path.exists(dirname):
+            os.makedirs(dirname)
+        saver = ModelCheckpoint(path, verbose=1, period=args.save_every)
+
+        keras_logs = os.path.join(args.output_dir, 'keras_logs')
+        if not os.path.exists(keras_logs):
+            os.makedirs(keras_logs)
+        csv_logger = CSVLogger(os.path.join(keras_logs, model.final_name + '.csv'),
+                               append=True, separator=';')
+
+        print("==> training")
+        model.fit(x=train_raw[0],
+                  y=train_raw[1],
+                  validation_data=val_raw,
+                  epochs=n_trained_chunks + args.epochs,
+                  initial_epoch=n_trained_chunks,
+                  callbacks=[metrics_callback, saver, csv_logger],
+                  shuffle=True,
+                  verbose=args.verbose,
+                  batch_size=args.batch_size)
+
+    elif args.mode == 'test':
+        del train_reader
+        del val_reader
+        del train_raw
+        del val_raw
+
+        test_reader = build_reader(args.data, 'test', args.horizon)
+        ret = utils.load_data(test_reader, discretizer, normalizer, args.small_part,
+                              return_names=True)
+
+        data = ret["data"][0]
+        labels = ret["data"][1]
+        names = ret["names"]
+
+        predictions = model.predict(data, batch_size=args.batch_size, verbose=1)
+        predictions = np.array(predictions)[:, 0]
+        metrics.print_metrics_binary(labels, predictions)
+
+        path = os.path.join(args.output_dir, "test_predictions", os.path.basename(args.load_state)) + ".csv"
+        utils.save_results(names, predictions, labels, path)
+
+    else:
+        raise ValueError("Wrong value for args.mode")
+
+
+if __name__ == '__main__':
+    main()

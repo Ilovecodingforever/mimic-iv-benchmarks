@@ -4,6 +4,7 @@ from __future__ import print_function
 from mimic4benchmark.readers import InHospitalMortalityReader
 from mimic4benchmark.readers import DecompensationReader
 from mimic4benchmark.readers import LengthOfStayReader
+from mimic4benchmark.readers import FixedHorizonIcuExitReader
 from mimic4benchmark.readers import PhenotypingReader
 from mimic4benchmark.readers import MultitaskReader
 from mimic4models.preprocessing import Discretizer, Normalizer
@@ -18,7 +19,7 @@ def main():
                                                  'discretizer, which are later used to standardize the input of '
                                                  'neural models.')
     parser.add_argument('--task', type=str, required=True,
-                        choices=['ihm', 'decomp', 'los', 'pheno', 'multi'])
+                        choices=['ihm', 'decomp', 'los', 'fixed_horizon_icu_exit', 'pheno', 'multi'])
     parser.add_argument('--timestep', type=float, default=1.0,
                         help="Rate of the re-sampling to discretize time-series.")
     parser.add_argument('--impute_strategy', type=str, default='previous',
@@ -50,6 +51,10 @@ def main():
         reader = DecompensationReader(dataset_dir=dataset_dir)
     if args.task == 'los':
         reader = LengthOfStayReader(dataset_dir=dataset_dir)
+    if args.task == 'fixed_horizon_icu_exit':
+        reader = FixedHorizonIcuExitReader(dataset_dir=dataset_dir,
+                                           listfile=os.path.join(args.data, 'train_listfile.csv'),
+                                           horizon=24)
     if args.task == 'pheno':
         reader = PhenotypingReader(dataset_dir=dataset_dir)
     if args.task == 'multi':

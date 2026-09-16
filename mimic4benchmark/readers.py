@@ -152,6 +152,78 @@ class InHospitalMortalityReader(Reader):
                 "name": name}
 
 
+class FixedHorizonIcuExitReader(Reader):
+    VALID_HORIZONS = (12, 24, 48, 96, 168)
+    PERIOD_LENGTH = 24.0
+
+    def __init__(self, dataset_dir, listfile=None, horizon=24):
+        """Reader for fixed-24h ICU-exit prediction from LOS listfiles.
+
+        Uses existing length-of-stay rows at period_length == 24h and converts
+        remaining LOS hours into y = int(y_true <= horizon).
+        """
+        horizon = int(horizon)
+        if horizon not in self.VALID_HORIZONS:
+            raise ValueError("Unsupported horizon {}. Valid horizons are {}.".format(
+                horizon, ", ".join(map(str, self.VALID_HORIZONS))))
+
+        Reader.__init__(self, dataset_dir, listfile)
+        self._horizon = horizon
+        rows = []
+        for line in self._data:
+            if not line.strip():
+                continue
+            name, period_length, y_true = line.strip().split(',')
+            period_length = float(period_length)
+            if abs(period_length - self.PERIOD_LENGTH) >= 1e-6:
+                continue
+            assert abs(period_length - self.PERIOD_LENGTH) < 1e-6
+            remaining_los = float(y_true)
+            rows.append((name, remaining_los, int(remaining_los <= horizon)))
+
+        names = [row[0] for row in rows]
+        if len(names) != len(set(names)):
+            raise ValueError("Duplicate stay found after filtering to 24h in {}".format(
+                listfile if listfile is not None else os.path.join(dataset_dir, "listfile.csv")))
+        self._data = rows
+
+    def get_stay_names(self):
+        return [row[0] for row in self._data]
+
+    def get_remaining_los(self):
+        return [row[1] for row in self._data]
+
+    def get_labels(self):
+        return [row[2] for row in self._data]
+
+    def _read_timeseries(self, ts_filename, time_bound):
+        ret = []
+        with open(os.path.join(self._dataset_dir, ts_filename), "r") as tsfile:
+            header = tsfile.readline().strip().split(',')
+            assert header[0] == "Hours"
+            for line in tsfile:
+                mas = line.strip().split(',')
+                t = float(mas[0])
+                if t > time_bound + 1e-6:
+                    break
+                ret.append(np.array(mas))
+        return (np.stack(ret), header)
+
+    def read_example(self, index):
+        if index < 0 or index >= len(self._data):
+            raise ValueError("Index must be from 0 (inclusive) to number of lines (exclusive).")
+
+        name = self._data[index][0]
+        y = self._data[index][2]
+        (X, header) = self._read_timeseries(name, self.PERIOD_LENGTH)
+
+        return {"X": X,
+                "t": self.PERIOD_LENGTH,
+                "y": y,
+                "header": header,
+                "name": name}
+
+
 class LengthOfStayReader(Reader):
     def __init__(self, dataset_dir, listfile=None):
         """ Reader for length of stay prediction task.
