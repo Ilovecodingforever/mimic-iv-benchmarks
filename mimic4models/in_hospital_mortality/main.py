@@ -6,6 +6,8 @@ import argparse
 import os
 import imp
 import re
+import random
+import tensorflow as tf
 
 from mimic4models.in_hospital_mortality import utils
 from mimic4benchmark.readers import InHospitalMortalityReader
@@ -24,7 +26,11 @@ parser.add_argument('--data', type=str, help='Path to the data of in-hospital mo
                     default=os.path.join(os.path.dirname(__file__), '../../data/in-hospital-mortality/'))
 parser.add_argument('--output_dir', type=str, help='Directory relative which all output files are stored',
                     default='.')
+parser.add_argument('--seed', type=int, default=49297)
 args = parser.parse_args()
+random.seed(args.seed)
+np.random.seed(args.seed)
+tf.set_random_seed(args.seed)
 print(args)
 
 if args.small_part:
@@ -65,11 +71,12 @@ args_dict['target_repl'] = target_repl
 print("==> using model {}".format(args.network))
 model_module = imp.load_source(os.path.basename(args.network), args.network)
 model = model_module.Network(**args_dict)
-suffix = ".bs{}{}{}.ts{}{}".format(args.batch_size,
-                                   ".L1{}".format(args.l1) if args.l1 > 0 else "",
-                                   ".L2{}".format(args.l2) if args.l2 > 0 else "",
-                                   args.timestep,
-                                   ".trc{}".format(args.target_repl_coef) if args.target_repl_coef > 0 else "")
+suffix = ".bs{}{}{}.ts{}{}.seed{}".format(args.batch_size,
+                                             ".L1{}".format(args.l1) if args.l1 > 0 else "",
+                                             ".L2{}".format(args.l2) if args.l2 > 0 else "",
+                                             args.timestep,
+                                             ".trc{}".format(args.target_repl_coef) if args.target_repl_coef > 0 else "",
+                                             args.seed)
 model.final_name = args.prefix + model.say_name() + suffix
 print("==> model.final_name:", model.final_name)
 
