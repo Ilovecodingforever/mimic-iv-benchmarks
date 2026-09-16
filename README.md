@@ -106,6 +106,13 @@ In in-hospital mortality prediction task `period_length` is always 48 hours, so 
 
 python -m mimic4models.split_train_val /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/in-hospital-mortality/
 
+python -m mimic4models.split_train_val /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay/
+
+python -m mimic4models.fixed_horizon_icu_exit.main \
+  --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay/ \
+  --print_stats
+
+
 # 1. Build 8h normalization statistics
 python -m mimic4models.create_normalizer_state \
   --task ihm \
@@ -115,6 +122,16 @@ python -m mimic4models.create_normalizer_state \
   --store_masks \
   --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/in-hospital-mortality/ \
   --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers/
+
+python -m mimic4models.create_normalizer_state \
+  --task fixed_horizon_icu_exit \
+  --timestep 8.0 \
+  --impute_strategy previous \
+  --start_time zero \
+  --store_masks \
+  --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay/ \
+  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers/
+
 
 # 2. Train 8h LSTM
 python -um mimic4models.in_hospital_mortality.main \
@@ -130,7 +147,34 @@ python -um mimic4models.in_hospital_mortality.main \
   --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/8h
 
 
+DATA=/heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay
+NORM=/heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers
+OUT=/heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/fixed_horizon_icu_exit
 
+for seed in 0 1 2 3 4; do
+    for horizon in 12 24 48 96 168; do
+
+      echo "========================================"
+      echo "horizon=${horizon}h seed=${seed}"
+      echo "========================================"
+
+      python -u -m mimic4models.fixed_horizon_icu_exit.main \
+        --network mimic4models/keras_models/lstm.py \
+        --dim 16 \
+        --depth 2 \
+        --dropout 0.3 \
+        --mode train \
+        --batch_size 8 \
+        --timestep 1 \
+        --horizon "$horizon" \
+        --seed "$seed" \
+        --data "$DATA" \
+        --normalizer_dir "$NORM" \
+        --output_dir "$OUT"
+
+    done
+  done
+done
 
 
 
