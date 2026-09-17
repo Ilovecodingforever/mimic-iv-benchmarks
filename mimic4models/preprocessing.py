@@ -8,6 +8,13 @@ import json
 import os
 
 
+DISCRETIZER_EPS = 1e-6
+
+
+def discretizer_bin_id(t, timestep, eps=DISCRETIZER_EPS):
+    return int(t / timestep - eps)
+
+
 class Discretizer:
     def __init__(self, timestep=0.8, store_masks=True, impute_strategy='zero', start_time='zero',
                  config_path=os.path.join(os.path.dirname(__file__), 'resources/discretizer_config.json')):
@@ -35,7 +42,7 @@ class Discretizer:
         if header is None:
             header = self._header
         assert header[0] == "Hours"
-        eps = 1e-6
+        eps = DISCRETIZER_EPS
 
         N_channels = len(self._id_to_channel)
         ts = [float(row[0]) for row in X]
@@ -90,7 +97,7 @@ class Discretizer:
             t = float(row[0]) - first_time
             if t > max_hours + eps:
                 continue
-            bin_id = int(t / self._timestep - eps)
+            bin_id = discretizer_bin_id(t, self._timestep, eps)
             assert 0 <= bin_id < N_bins
 
             for j in range(1, len(row)):

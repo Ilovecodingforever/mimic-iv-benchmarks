@@ -13,6 +13,8 @@ from mimic4models import common_utils
 from mimic4models import metrics
 from mimic4models.in_hospital_mortality import utils
 from mimic4models.preprocessing import Discretizer, Normalizer
+from mimic4models.fixed_horizon_icu_exit.matched_count_control.sampling import (
+    DEFAULT_SAMPLING_SEED, SamplingReader, validate_sampling_args)
 
 
 HORIZONS = FixedHorizonIcuExitReader.VALID_HORIZONS
@@ -47,9 +49,20 @@ def validate_data(data_dir):
         validate_split(data_dir, split)
 
 
-def default_normalizer_state_path(normalizer_dir, timestep, imputation, n_examples):
-    file_name = 'fixed_horizon_icu_exit_ts:{:.2f}_impute:{}_start:zero_masks:True_n:{}.normalizer'.format(
-        timestep, imputation, n_examples)
+def default_normalizer_state_path(normalizer_dir, timestep, imputation, n_examples,
+                                  sampling_strategy='none', sampling_interval=None,
+                                  sampling_seed=DEFAULT_SAMPLING_SEED):
+    if sampling_strategy == 'none':
+        file_name = 'fixed_horizon_icu_exit_ts:{:.2f}_impute:{}_start:zero_masks:True_n:{}.normalizer'.format(
+            timestep, imputation, n_examples)
+    else:
+        seed_part = ''
+        if sampling_strategy == 'random_matched':
+            seed_part = '_seed:{}'.format(sampling_seed)
+        file_name = ('fixed_horizon_icu_exit_sampling:{}_r:{}{}_ts:{:.2f}'
+                     '_impute:{}_start:zero_masks:True_n:{}.normalizer').format(
+                         sampling_strategy, int(sampling_interval), seed_part,
+                         timestep, imputation, n_examples)
     return os.path.join(normalizer_dir, file_name)
 
 
@@ -81,6 +94,14 @@ def main():
     parser.add_argument('--normalizer_dir', type=str, default=DEFAULT_NORMALIZER_DIR,
                         help='Directory containing fixed-horizon ICU-exit normalizer states.')
     parser.add_argument('--seed', type=int, default=49297)
+    parser.add_argument('--sampling_strategy', type=str, default='none',
+                        choices=['none', 'structured', 'random_matched'],
+                        help='Matched-count sampling intervention before downstream discretization.')
+    parser.add_argument('--sampling_interval', type=float, default=4.0,
+                        choices=[2.0, 4.0, 8.0],
+                        help='Coarse interval used only for measurement selection.')
+    parser.add_argument('--sampling_seed', type=int, default=DEFAULT_SAMPLING_SEED,
+                        help='Seed for random matched-count sampling; independent of model seed.')
     parser.add_argument('--print_stats', action='store_true',
                         help='Print fixed-24h cohort counts and prevalence for every horizon, then exit.')
     for action in parser._actions:
@@ -93,6 +114,8 @@ def main():
         parser.error('--network is required unless --print_stats is used')
 
     print(args)
+
+    validate_sampling_args(args.sampling_strategy, args.sampling_interval, args.timestep)
 
     if args.print_stats:
         print_stats(args.data)
@@ -115,20 +138,28 @@ def main():
 
     train_reader = build_reader(args.data, 'train', args.horizon)
     val_reader = build_reader(args.data, 'val', args.horizon)
+    if args.sampling_strategy != 'none':
+        train_reader = SamplingReader(train_reader, args.sampling_strategy,
+                                      int(args.sampling_interval), args.sampling_seed)
+        val_reader = SamplingReader(val_reader, args.sampling_strategy,
+                                    int(args.sampling_interval), args.sampling_seed)
 
     discretizer = Discretizer(timestep=float(args.timestep),
                               store_masks=True,
                               impute_strategy='previous',
                               start_time='zero')
 
-    discretizer_header = discretizer.transform(train_reader.read_example(0)["X"])[1].split(',')
+    first_train = train_reader.read_example(0)
+    discretizer_header = discretizer.transform(first_train["X"], end=first_train["t"])[1].split(',')
     cont_channels = [i for (i, x) in enumerate(discretizer_header) if x.find("->") == -1]
 
     normalizer = Normalizer(fields=cont_channels)
     normalizer_state = args.normalizer_state
     if normalizer_state is None:
         normalizer_state = default_normalizer_state_path(
-            args.normalizer_dir, args.timestep, args.imputation, train_reader.get_number_of_examples())
+            args.normalizer_dir, args.timestep, args.imputation,
+            train_reader.get_number_of_examples(), args.sampling_strategy,
+            args.sampling_interval, args.sampling_seed)
     if not os.path.exists(normalizer_state):
         raise IOError('Normalizer state file does not exist: {}'.format(normalizer_state))
     normalizer.load_params(normalizer_state)
@@ -137,17 +168,26 @@ def main():
     args_dict['header'] = discretizer_header
     args_dict['task'] = 'ihm'
     args_dict['target_repl'] = target_repl
+    args_dict['sampling_strategy'] = args.sampling_strategy
+    args_dict['sampling_interval'] = args.sampling_interval
+    args_dict['sampling_seed'] = args.sampling_seed
 
     print("==> using model {}".format(args.network))
     model_module = imp.load_source(os.path.basename(args.network), args.network)
     model = model_module.Network(**args_dict)
-    suffix = ".h{}.bs{}{}{}.ts{}{}.seed{}".format(args.horizon,
-                                                     args.batch_size,
-                                                     ".L1{}".format(args.l1) if args.l1 > 0 else "",
-                                                     ".L2{}".format(args.l2) if args.l2 > 0 else "",
-                                                     args.timestep,
-                                                     ".trc{}".format(args.target_repl_coef) if args.target_repl_coef > 0 else "",
-                                                     args.seed)
+    sampling_suffix = ""
+    if args.sampling_strategy != 'none':
+        sampling_suffix = ".sample{}.r{}".format(args.sampling_strategy, int(args.sampling_interval))
+        if args.sampling_strategy == 'random_matched':
+            sampling_suffix += ".sseed{}".format(args.sampling_seed)
+    suffix = ".h{}.bs{}{}{}.ts{}{}{}.seed{}".format(args.horizon,
+                                                       args.batch_size,
+                                                       ".L1{}".format(args.l1) if args.l1 > 0 else "",
+                                                       ".L2{}".format(args.l2) if args.l2 > 0 else "",
+                                                       args.timestep,
+                                                       sampling_suffix,
+                                                       ".trc{}".format(args.target_repl_coef) if args.target_repl_coef > 0 else "",
+                                                       args.seed)
     model.final_name = args.prefix + model.say_name() + suffix
     print("==> model.final_name:", model.final_name)
 
@@ -227,6 +267,9 @@ def main():
         del val_raw
 
         test_reader = build_reader(args.data, 'test', args.horizon)
+        if args.sampling_strategy != 'none':
+            test_reader = SamplingReader(test_reader, args.sampling_strategy,
+                                         int(args.sampling_interval), args.sampling_seed)
         ret = utils.load_data(test_reader, discretizer, normalizer, args.small_part,
                               return_names=True)
 

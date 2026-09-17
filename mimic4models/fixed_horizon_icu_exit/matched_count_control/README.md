@@ -1,0 +1,128 @@
+# Matched-count / representation-resolution control
+
+This folder implements a controlled fixed-horizon ICU-exit experiment for separating three effects that are confounded when the existing preprocessing changes the `Discretizer` timestep from 1 hour to a coarser grid such as 2, 4, or 8 hours.
+
+The three effects are:
+
+1. Measurement quantity: fewer raw variable observations survive because several observations inside a coarse bin collapse to one value.
+2. Temporal placement / sampling structure: the observations that survive are chosen by the coarse grid geometry.
+3. Representation resolution: the LSTM sees fewer recurrent steps when the downstream grid is coarse.
+
+The primary interval is `r=4h`. The same code also supports `r=2h` and `r=8h`.
+
+| Condition | Raw observation intervention | Downstream grid | Recurrent steps for first 24h | Purpose |
+| --- | --- | --- | --- | --- |
+| A. Standard 1h | None | `Discretizer(timestep=1)` | 24 | Historical fine-grid baseline |
+| B. Structured-r + 1h | Keep exactly the raw cells the `r`-hour discretizer would keep per stay, variable, and coarse bin | `Discretizer(timestep=1)` | 24 | Effect of discarding measurements while keeping a fine representation |
+| C. Random matched-count + 1h | For each stay and variable, randomly keep the same number of occupied 1h cells as B | `Discretizer(timestep=1)` | 24 | Effect of structured temporal placement after matching count and grid |
+| D. Existing r-hour | None beyond the historical `r`-hour discretizer | `Discretizer(timestep=r)` | `24/r` | Historical coarse-grid experiment |
+
+A vs B estimates the effect of discarding measurements while preserving the 1h model representation. B vs C estimates the effect of structured temporal selection after matching patient, variable, effective observation count, downstream grid, and sequence length. B vs D is the representation-resolution effect: both use the same coarse observation-selection principle, but D represents the stay on a coarse grid.
+
+This is a controlled characterization, not a perfectly additive causal decomposition. B vs D should not be called an isolated LSTM sequence-length effect because the coarser grid also changes time alignment, mask locations, previous-value imputation trajectories, and temporal precision.
+
+## Why B is not `Discretizer(r) -> Discretizer(1)`
+
+The full `r`-hour `Discretizer` output is already a model matrix. It has collapsed observations, removed exact timestamps, added masks, one-hot encoded categorical channels, and imputed missing values. Feeding that matrix into another discretizer would not be a raw event sequence.
+
+Instead B reuses only the discretizer's selection semantics:
+
+```text
+raw first-24h rows
+-> for each stay x variable x r-hour bin, keep the raw row/column cell that Discretizer(timestep=r) would leave in that cell
+-> preserve the original timestamp
+-> reconstruct a sparse raw timeline containing only selected cells
+-> run the normal 1h Discretizer
+```
+
+Selection is at raw cell granularity, not whole-row granularity. If one row contains both HR and Glucose, the sampler can keep HR without leaking Glucose.
+
+## Why C samples occupied 1h variable-cells
+
+If C sampled arbitrary raw observations, two sampled observations for one variable could land in the same 1h bin. The downstream 1h discretizer would then collapse them, and the model-visible count would no longer match B.
+
+C therefore works at the occupied 1h variable-cell level. For each stay and variable it:
+
+1. Computes `K`, the number of cells retained by B.
+2. Finds all occupied 1h bins for that variable in the original first-24h data.
+3. Uses the same row-order overwrite semantics as `Discretizer(timestep=1)` to choose one representative raw observation per occupied 1h bin.
+4. Randomly samples exactly `K` distinct occupied 1h bins without replacement.
+5. Reconstructs a sparse raw timeline from those representative cells.
+
+Counts are matched per patient and per variable, not just globally.
+
+Randomness is deterministic from `sampling_seed`, stay name, sampling interval, and variable name. It is independent of the model seed, so model seeds 0 through 4 see the same randomly thinned dataset when `sampling_seed` is unchanged.
+
+## Training integration
+
+The existing fixed-horizon ICU-exit training pipeline is reused. The sampler is a reader wrapper placed before the existing 1h discretizer:
+
+```bash
+python -m mimic4models.fixed_horizon_icu_exit.main \
+  --network mimic4models/keras_models/lstm.py \
+  --data /path/to/length-of-stay \
+  --horizon 12 \
+  --timestep 1.0 \
+  --sampling_strategy structured \
+  --sampling_interval 4
+```
+
+For C:
+
+```bash
+python -m mimic4models.fixed_horizon_icu_exit.main \
+  --network mimic4models/keras_models/lstm.py \
+  --data /path/to/length-of-stay \
+  --horizon 12 \
+  --timestep 1.0 \
+  --sampling_strategy random_matched \
+  --sampling_interval 4 \
+  --sampling_seed 100
+```
+
+`structured` and `random_matched` require `--timestep 1.0`. The sampling interval and the downstream timestep are different concepts: `--sampling_interval 4 --timestep 1.0` means a 4h measurement-selection intervention represented on a 1h model grid.
+
+Condition D remains the historical coarse-grid run, for example `--timestep 4.0 --sampling_strategy none`.
+
+## Normalizers
+
+Do not reuse the standard 1h normalizer for B or C. The sampled timelines have different masks and previous-value imputation trajectories.
+
+Create B/C normalizers with the existing normalizer machinery plus the sampling flags:
+
+```bash
+python -m mimic4models.create_normalizer_state \
+  --task fixed_horizon_icu_exit \
+  --data /path/to/length-of-stay \
+  --horizon 12 \
+  --timestep 1.0 \
+  --impute_strategy previous \
+  --start_time zero \
+  --store_masks \
+  --sampling_strategy random_matched \
+  --sampling_interval 4 \
+  --sampling_seed 100 \
+  --output_dir /path/to/normalizers
+```
+
+The filename encodes task, sampling strategy, interval, random sampling seed where relevant, downstream timestep, imputation, mask setting, and training example count.
+
+## Checks
+
+Toy edge-case tests:
+
+```bash
+python mimic4models/fixed_horizon_icu_exit/matched_count_control/test_sampling.py
+```
+
+Real-data validation on a small sample:
+
+```bash
+python -m mimic4models.fixed_horizon_icu_exit.matched_count_control.validate_sampling \
+  --data /path/to/length-of-stay \
+  --split train \
+  --horizon 12 \
+  --num_examples 100
+```
+
+The validation script checks unchanged names and labels, B/C per-variable count equality, B/C post-1h mask equality, deterministic random sampling, absence of selected observations after hour 24, and expected sequence lengths for A/B/C/D.

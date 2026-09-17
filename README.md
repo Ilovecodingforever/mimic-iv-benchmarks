@@ -144,7 +144,7 @@ python -um mimic4models.in_hospital_mortality.main \
   --batch_size 8 \
   --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/in-hospital-mortality/ \
   --normalizer_state /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers/ihm_ts:8.00_impute:previous_start:zero_masks:True_n:15579.normalizer \
-  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/8h
+  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/in-hospital-mortality/results/8h
 
 
 DATA=/heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay
@@ -165,12 +165,12 @@ for seed in 0 1 2 3 4; do
         --dropout 0.3 \
         --mode train \
         --batch_size 8 \
-        --timestep 1 \
         --horizon "$horizon" \
         --seed "$seed" \
         --data "$DATA" \
         --normalizer_dir "$NORM" \
-        --output_dir "$OUT"
+        --output_dir "$OUT/${horizon}h" \
+        --timestep 1
 
     done
   done
