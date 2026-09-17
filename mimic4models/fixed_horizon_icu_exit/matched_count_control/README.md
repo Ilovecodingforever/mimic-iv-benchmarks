@@ -13,13 +13,13 @@ The primary interval is `r=4h`. The same code also supports `r=2h` and `r=8h`.
 | Condition | Raw observation intervention | Downstream grid | Recurrent steps for first 24h | Purpose |
 | --- | --- | --- | --- | --- |
 | A. Standard 1h | None | `Discretizer(timestep=1)` | 24 | Historical fine-grid baseline |
-| B. Structured-r + 1h | Keep exactly the raw cells the `r`-hour discretizer would keep per stay, variable, and coarse bin | `Discretizer(timestep=1)` | 24 | Effect of discarding measurements while keeping a fine representation |
-| C. Random matched-count + 1h | For each stay and variable, randomly keep the same number of occupied 1h cells as B | `Discretizer(timestep=1)` | 24 | Effect of structured temporal placement after matching count and grid |
+| B. Structured-r + 1h | Keep exactly the raw cells the `r`-hour discretizer would keep per stay, variable, and coarse bin | `Discretizer(timestep=1)` | 24 | Structured thinning while holding the 1h representation fixed |
+| C. Random matched-count + 1h | For each stay and variable, randomly keep the same number of occupied 1h cells as B | `Discretizer(timestep=1)` | 24 | Random matched-count control for structured temporal placement |
 | D. Existing r-hour | None beyond the historical `r`-hour discretizer | `Discretizer(timestep=r)` | `24/r` | Historical coarse-grid experiment |
 
-A vs B estimates the effect of discarding measurements while preserving the 1h model representation. B vs C estimates the effect of structured temporal selection after matching patient, variable, effective observation count, downstream grid, and sequence length. B vs D is the representation-resolution effect: both use the same coarse observation-selection principle, but D represents the stay on a coarse grid.
+A vs B estimates the effect of structured thinning while holding the downstream 1h representation fixed. It is not a pure count-only contrast: B both reduces the number of measurements and uses the particular coarse r-hour rule to decide which measurements survive. B vs C estimates the effect of structured temporal selection versus random matched-count selection while matching patient, variable, effective observation count, downstream grid, and sequence length. B vs D is the representation-resolution effect given the same coarse observation-selection rule: both use the same coarse observation-selection principle, but D represents the stay on a coarse grid.
 
-This is a controlled characterization, not a perfectly additive causal decomposition. B vs D should not be called an isolated LSTM sequence-length effect because the coarser grid also changes time alignment, mask locations, previous-value imputation trajectories, and temporal precision.
+This is a controlled characterization, not a perfectly additive causal decomposition. Measurement quantity remains one candidate mechanism, but A-B should not be read as an exact isolated information-quantity effect. B vs D should not be called an isolated LSTM sequence-length effect because the coarser grid also changes time alignment, mask locations, previous-value imputation trajectories, and temporal precision.
 
 ## Why B is not `Discretizer(r) -> Discretizer(1)`
 
@@ -125,4 +125,4 @@ python -m mimic4models.fixed_horizon_icu_exit.matched_count_control.validate_sam
   --num_examples 100
 ```
 
-The validation script checks unchanged names and labels, B/C per-variable count equality, B/C post-1h mask equality, deterministic random sampling, absence of selected observations after hour 24, and expected sequence lengths for A/B/C/D.
+The validation script checks unchanged names and labels, B/C per-variable count equality, B/C post-1h mask equality, deterministic random sampling, absence of selected observations after hour 24, expected sequence lengths for A/B/C/D, and `structured_vs_coarse_value_mismatches=0` for the B-vs-D observed coarse-cell equivalence check.

@@ -1,6 +1,7 @@
 from __future__ import absolute_import
 from __future__ import print_function
 
+import inspect
 import os
 import sys
 
@@ -11,6 +12,10 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from mimic4models.preprocessing import Discretizer, discretizer_bin_id
+from mimic4models.create_normalizer_state import validate_normalizer_args
+from mimic4models.fixed_horizon_icu_exit import main as fixed_main
+from mimic4models.fixed_horizon_icu_exit.matched_count_control.validate_sampling import (
+    structured_vs_coarse_value_mismatches)
 from mimic4models.fixed_horizon_icu_exit.matched_count_control.sampling import (
     apply_sampling_to_example, cell_counts_by_channel, choose_matched_candidates,
     mask_counts_by_channel, random_matched_cells, random_matched_sample,
@@ -162,6 +167,17 @@ def test_categorical_variable_selection():
     assert data[0, col(h, 'Capillary refill rate->1.0')] == 1.0
 
 
+def test_structured_vs_coarse_value_equivalence_helper_continuous_and_categorical():
+    continuous = {'X': a([['0.5', '70', '', ''], ['1.2', '71', '100', ''],
+                          ['3.8', '72', '', ''], ['4.1', '73', '', '7.2']]),
+                  'header': HEADER, 't': 24.0, 'y': 0, 'name': 'toy'}
+    assert structured_vs_coarse_value_mismatches(continuous, 4, 'zero') == 0
+
+    categorical = {'X': a([['1', '0.0'], ['2', '1.0']], CAT_HEADER),
+                   'header': CAT_HEADER, 't': 24.0, 'y': 0, 'name': 'toy_cat'}
+    assert structured_vs_coarse_value_mismatches(categorical, 4, 'zero') == 0
+
+
 def test_mixed_measurements_select_individual_cells():
     X = a([['2.0', '80', '120', ''], ['3.0', '', '130', '']])
     sparse, _ = structured_sample(X, HEADER, 4)
@@ -225,6 +241,47 @@ def test_previous_imputation_happens_after_selection_and_masks_define_counts():
     data, h = transformed(one, 1, HEADER, impute='previous')
     assert mask_counts_by_channel(data, h)['Heart Rate'] == 1
     assert np.sum(data[:, col(h, 'Heart Rate')] == 70.0) > 1
+
+
+def test_fixed_horizon_normalizer_rejects_no_masks():
+    class Args(object):
+        pass
+    args = Args()
+    args.task = 'fixed_horizon_icu_exit'
+    args.store_masks = False
+    args.sampling_strategy = 'none'
+    args.sampling_interval = 4.0
+    args.timestep = 1.0
+    args.start_time = 'zero'
+    try:
+        validate_normalizer_args(args)
+    except ValueError as exc:
+        assert 'require masks' in str(exc)
+        assert 'masks:True' in str(exc)
+    else:
+        raise AssertionError('fixed_horizon_icu_exit --no-masks did not fail')
+
+
+def test_test_mode_loader_path_does_not_load_train_val_raw():
+    calls = []
+    old_load_data = fixed_main.utils.load_data
+
+    def fake_load_data(reader, discretizer, normalizer, small_part, return_names=False):
+        calls.append((reader, return_names))
+        return {'data': (np.zeros((1, 24, 1)), np.array([0])), 'names': ['stay.csv']}
+
+    fixed_main.utils.load_data = fake_load_data
+    try:
+        ret = fixed_main.load_test_raw('test_reader', 'discretizer', 'normalizer', False)
+    finally:
+        fixed_main.utils.load_data = old_load_data
+    assert ret['names'] == ['stay.csv']
+    assert calls == [('test_reader', True)]
+
+    main_source = inspect.getsource(fixed_main.main)
+    test_block = main_source.split("elif args.mode == 'test':", 1)[1]
+    assert 'load_train_val_raw' not in test_block
+    assert 'load_test_raw' in test_block
 
 
 def run_all():

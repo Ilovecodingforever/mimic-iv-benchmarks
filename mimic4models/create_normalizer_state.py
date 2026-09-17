@@ -16,6 +16,17 @@ import os
 import argparse
 
 
+def validate_normalizer_args(args):
+    validate_sampling_args(args.sampling_strategy, args.sampling_interval, args.timestep)
+    if args.sampling_strategy != 'none' and args.task != 'fixed_horizon_icu_exit':
+        raise ValueError('matched-count sampling is only implemented for fixed_horizon_icu_exit')
+    if args.sampling_strategy != 'none' and args.start_time != 'zero':
+        raise ValueError('matched-count sampling for fixed_horizon_icu_exit requires --start_time zero')
+    if args.task == 'fixed_horizon_icu_exit' and not args.store_masks:
+        raise ValueError('fixed_horizon_icu_exit normalizers require masks because the training '
+                         'pipeline uses store_masks=True and the filename convention assumes masks:True')
+
+
 def main():
     parser = argparse.ArgumentParser(description='Script for creating a normalizer state - a file which stores the '
                                                  'means and standard deviations of columns of the output of a '
@@ -56,11 +67,7 @@ def main():
     args = parser.parse_args()
     print(args)
 
-    validate_sampling_args(args.sampling_strategy, args.sampling_interval, args.timestep)
-    if args.sampling_strategy != 'none' and args.task != 'fixed_horizon_icu_exit':
-        raise ValueError('matched-count sampling is only implemented for fixed_horizon_icu_exit')
-    if args.sampling_strategy != 'none' and args.start_time != 'zero':
-        raise ValueError('matched-count sampling for fixed_horizon_icu_exit requires --start_time zero')
+    validate_normalizer_args(args)
 
     # create the reader
     reader = None

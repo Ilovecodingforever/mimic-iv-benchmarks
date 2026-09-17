@@ -80,6 +80,23 @@ def print_stats(data_dir):
                 horizon, total, positives, prevalence))
 
 
+def maybe_wrap_reader(reader, sampling_strategy, sampling_interval, sampling_seed):
+    if sampling_strategy == 'none':
+        return reader
+    return SamplingReader(reader, sampling_strategy, int(sampling_interval), sampling_seed)
+
+
+def load_train_val_raw(train_reader, val_reader, discretizer, normalizer, small_part):
+    train_raw = utils.load_data(train_reader, discretizer, normalizer, small_part)
+    val_raw = utils.load_data(val_reader, discretizer, normalizer, small_part)
+    return train_raw, val_raw
+
+
+def load_test_raw(test_reader, discretizer, normalizer, small_part):
+    return utils.load_data(test_reader, discretizer, normalizer, small_part,
+                           return_names=True)
+
+
 def main():
     parser = argparse.ArgumentParser()
     common_utils.add_common_arguments(parser)
@@ -137,12 +154,8 @@ def main():
     target_repl = (args.target_repl_coef > 0.0 and args.mode == 'train')
 
     train_reader = build_reader(args.data, 'train', args.horizon)
-    val_reader = build_reader(args.data, 'val', args.horizon)
-    if args.sampling_strategy != 'none':
-        train_reader = SamplingReader(train_reader, args.sampling_strategy,
-                                      int(args.sampling_interval), args.sampling_seed)
-        val_reader = SamplingReader(val_reader, args.sampling_strategy,
-                                    int(args.sampling_interval), args.sampling_seed)
+    train_reader = maybe_wrap_reader(train_reader, args.sampling_strategy,
+                                     args.sampling_interval, args.sampling_seed)
 
     discretizer = Discretizer(timestep=float(args.timestep),
                               store_masks=True,
@@ -213,24 +226,27 @@ def main():
         model.load_weights(args.load_state)
         n_trained_chunks = int(re.match(".*epoch([0-9]+).*", args.load_state).group(1))
 
-    train_raw = utils.load_data(train_reader, discretizer, normalizer, args.small_part)
-    val_raw = utils.load_data(val_reader, discretizer, normalizer, args.small_part)
-
-    if target_repl:
-        T = train_raw[0][0].shape[0]
-
-        def extend_labels(data):
-            data = list(data)
-            labels = np.array(data[1])
-            data[1] = [labels, None]
-            data[1][1] = np.expand_dims(labels, axis=-1).repeat(T, axis=1)
-            data[1][1] = np.expand_dims(data[1][1], axis=-1)
-            return data
-
-        train_raw = extend_labels(train_raw)
-        val_raw = extend_labels(val_raw)
-
     if args.mode == 'train':
+        val_reader = build_reader(args.data, 'val', args.horizon)
+        val_reader = maybe_wrap_reader(val_reader, args.sampling_strategy,
+                                       args.sampling_interval, args.sampling_seed)
+        train_raw, val_raw = load_train_val_raw(train_reader, val_reader,
+                                                discretizer, normalizer, args.small_part)
+
+        if target_repl:
+            T = train_raw[0][0].shape[0]
+
+            def extend_labels(data):
+                data = list(data)
+                labels = np.array(data[1])
+                data[1] = [labels, None]
+                data[1][1] = np.expand_dims(labels, axis=-1).repeat(T, axis=1)
+                data[1][1] = np.expand_dims(data[1][1], axis=-1)
+                return data
+
+            train_raw = extend_labels(train_raw)
+            val_raw = extend_labels(val_raw)
+
         path = os.path.join(args.output_dir, 'keras_states/' + model.final_name + '.epoch{epoch}.test{val_loss}.state')
 
         metrics_callback = keras_utils.InHospitalMortalityMetrics(train_data=train_raw,
@@ -261,17 +277,10 @@ def main():
                   batch_size=args.batch_size)
 
     elif args.mode == 'test':
-        del train_reader
-        del val_reader
-        del train_raw
-        del val_raw
-
         test_reader = build_reader(args.data, 'test', args.horizon)
-        if args.sampling_strategy != 'none':
-            test_reader = SamplingReader(test_reader, args.sampling_strategy,
-                                         int(args.sampling_interval), args.sampling_seed)
-        ret = utils.load_data(test_reader, discretizer, normalizer, args.small_part,
-                              return_names=True)
+        test_reader = maybe_wrap_reader(test_reader, args.sampling_strategy,
+                                        args.sampling_interval, args.sampling_seed)
+        ret = load_test_raw(test_reader, discretizer, normalizer, args.small_part)
 
         data = ret["data"][0]
         labels = ret["data"][1]

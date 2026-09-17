@@ -15,7 +15,7 @@ from mimic4benchmark.readers import FixedHorizonIcuExitReader
 from mimic4models.preprocessing import Discretizer
 from mimic4models.fixed_horizon_icu_exit.matched_count_control.sampling import (
     DEFAULT_SAMPLING_SEED, apply_sampling_to_example, cell_counts_by_channel,
-    mask_counts_by_channel, nonempty_cell_count)
+    mask_counts_by_channel, nonempty_cell_count, select_last_raw_observation_per_bin)
 
 
 def build_reader(data_dir, split, horizon):
@@ -26,6 +26,47 @@ def build_reader(data_dir, split, horizon):
         dataset_dir = os.path.join(data_dir, 'train')
         listfile = os.path.join(data_dir, '{}_listfile.csv'.format(split))
     return FixedHorizonIcuExitReader(dataset_dir=dataset_dir, listfile=listfile, horizon=horizon)
+
+
+def _channel_value_matches(discretized, discretized_header, bin_id, channel, raw_value):
+    if channel in discretized_header:
+        return abs(discretized[bin_id, discretized_header.index(channel)] - float(raw_value)) <= 1e-12
+    categorical_name = channel + '->' + raw_value
+    if categorical_name not in discretized_header:
+        return False
+    return discretized[bin_id, discretized_header.index(categorical_name)] == 1.0
+
+
+def structured_vs_coarse_value_mismatches(example, interval, imputation='previous'):
+    """Count observed coarse cells where structured selection disagrees with D.
+
+    D's masks identify genuinely observed cells; imputed values are ignored.
+    """
+    discretizer = Discretizer(timestep=float(interval), store_masks=True,
+                              impute_strategy=imputation, start_time='zero')
+    coarse, coarse_header = discretizer.transform(example['X'], header=example['header'],
+                                                  end=example['t'])
+    coarse_header = coarse_header.split(',')
+    selected = select_last_raw_observation_per_bin(example['X'], example['header'],
+                                                   interval, end=example['t'])
+    mismatches = 0
+    for col_id in range(1, len(example['header'])):
+        channel = example['header'][col_id]
+        mask_name = 'mask->' + channel
+        if mask_name not in coarse_header:
+            mismatches += coarse.shape[0]
+            continue
+        mask_col = coarse_header.index(mask_name)
+        for bin_id in range(coarse.shape[0]):
+            if coarse[bin_id, mask_col] != 1:
+                continue
+            cell = selected.get((bin_id, col_id))
+            if cell is None:
+                mismatches += 1
+                continue
+            if not _channel_value_matches(coarse, coarse_header, bin_id, channel, cell['value']):
+                mismatches += 1
+    return mismatches
 
 
 def add_counts(total, counts):
@@ -53,7 +94,8 @@ def validate_interval(reader, interval, num_examples, sampling_seed, imputation)
              'affected': 0,
              'count_mismatches': 0,
              'mask_mismatches': 0,
-             'after_24': 0}
+             'after_24': 0,
+             'structured_vs_coarse_value_mismatches': 0}
     b_by_channel = {}
     c_by_channel = {}
 
@@ -99,7 +141,10 @@ def validate_interval(reader, interval, num_examples, sampling_seed, imputation)
             if b_masks[channel] != c_masks.get(channel, 0):
                 stats['mask_mismatches'] += 1
 
-        dx, _ = dr.transform(raw['X'], end=raw['t'])
+        stats['structured_vs_coarse_value_mismatches'] += structured_vs_coarse_value_mismatches(
+            raw, interval, imputation)
+
+        dx, _ = dr.transform(raw['X'], header=raw['header'], end=raw['t'])
         expected_d_steps = int(24 / interval)
         if dx.shape[0] != expected_d_steps:
             raise AssertionError('D length for r={} is {}, expected {}'.format(
@@ -111,12 +156,16 @@ def validate_interval(reader, interval, num_examples, sampling_seed, imputation)
         raise AssertionError('post-1h mask mismatches: {}'.format(stats['mask_mismatches']))
     if stats['after_24']:
         raise AssertionError('selected observations after 24h: {}'.format(stats['after_24']))
+    if stats['structured_vs_coarse_value_mismatches']:
+        raise AssertionError('structured vs coarse value mismatches: {}'.format(
+            stats['structured_vs_coarse_value_mismatches']))
 
     print('r={} examples={} raw_obs={} B_obs={} C_obs={} retention={:.6f} affected={}'.format(
         interval, stats['examples'], stats['raw_total'], stats['b_total'], stats['c_total'],
         float(stats['b_total']) / stats['raw_total'] if stats['raw_total'] else 0.0,
         stats['affected']))
-    print('  mismatched patient-variable counts=0 post_1h_mask_mismatches=0 after_24=0')
+    print('  mismatched patient-variable counts=0 post_1h_mask_mismatches=0 after_24=0 '
+          'structured_vs_coarse_value_mismatches=0')
     print('  per-variable B counts:', b_by_channel)
     print('  per-variable C counts:', c_by_channel)
 
