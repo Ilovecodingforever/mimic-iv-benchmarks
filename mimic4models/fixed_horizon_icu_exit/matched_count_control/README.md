@@ -96,6 +96,7 @@ python -m mimic4models.fixed_horizon_icu_exit.main \
 
 
 
+
 `structured` and `random_matched` require `--timestep 1.0`. The sampling interval and the downstream timestep are different concepts: `--sampling_interval 4 --timestep 1.0` means a 4h measurement-selection intervention represented on a 1h model grid.
 
 Condition D remains the historical coarse-grid run, for example `--timestep 4.0 --sampling_strategy none`.
