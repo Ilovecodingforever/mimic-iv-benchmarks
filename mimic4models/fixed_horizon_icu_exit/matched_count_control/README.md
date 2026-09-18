@@ -64,13 +64,13 @@ python -m mimic4models.fixed_horizon_icu_exit.main \
   --dim 16 \
   --depth 2 \
   --dropout 0.3 \
-  --batch_size 8
+  --batch_size 8 \
   --horizon 12 \
   --timestep 1.0 \
-  --sampling_interval 4
+  --sampling_interval 4 \
   --normalizer_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers \
   --sampling_strategy structured \
-  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/fixed_horizon_icu_exit/structured \
+  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/fixed_horizon_icu_exit/structured/12h/4h \
   --seed 0
 ```
 
@@ -84,15 +84,17 @@ python -m mimic4models.fixed_horizon_icu_exit.main \
   --dim 16 \
   --depth 2 \
   --dropout 0.3 \
-  --batch_size 8
+  --batch_size 8 \
   --timestep 1.0 \
   --sampling_interval 4 \
   --sampling_seed 100 \
   --normalizer_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers \
   --sampling_strategy random_matched \
-  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/fixed_horizon_icu_exit/random_matched \
+  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/fixed_horizon_icu_exit/random_matched/12h/4h \
   --seed 0
 ```
+
+
 
 `structured` and `random_matched` require `--timestep 1.0`. The sampling interval and the downstream timestep are different concepts: `--sampling_interval 4 --timestep 1.0` means a 4h measurement-selection intervention represented on a 1h model grid.
 
@@ -148,7 +150,7 @@ Real-data validation on a small sample:
 
 ```bash
 python -m mimic4models.fixed_horizon_icu_exit.matched_count_control.validate_sampling \
-  --data /path/to/length-of-stay \
+  --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay \
   --split train \
   --horizon 12 \
   --num_examples 100
