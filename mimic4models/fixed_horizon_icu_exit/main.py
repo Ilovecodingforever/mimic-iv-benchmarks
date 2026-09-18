@@ -86,6 +86,71 @@ def maybe_wrap_reader(reader, sampling_strategy, sampling_interval, sampling_see
     return SamplingReader(reader, sampling_strategy, int(sampling_interval), sampling_seed)
 
 
+def resolve_test_sampling_regime(sampling_strategy, sampling_interval, sampling_seed,
+                                 test_sampling_strategy=None,
+                                 test_sampling_interval=None,
+                                 test_sampling_seed=None):
+    strategy = test_sampling_strategy if test_sampling_strategy is not None else sampling_strategy
+    interval = test_sampling_interval if test_sampling_interval is not None else sampling_interval
+    seed = test_sampling_seed if test_sampling_seed is not None else sampling_seed
+    return strategy, interval, seed
+
+
+def resolve_test_sampling_args(args):
+    return resolve_test_sampling_regime(
+        args.sampling_strategy, args.sampling_interval, args.sampling_seed,
+        args.test_sampling_strategy, args.test_sampling_interval,
+        args.test_sampling_seed)
+
+
+def validate_all_sampling_args(args):
+    validate_sampling_args(args.sampling_strategy, args.sampling_interval, args.timestep)
+    test_sampling_strategy, test_sampling_interval, test_sampling_seed = resolve_test_sampling_args(args)
+    validate_sampling_args(test_sampling_strategy, test_sampling_interval, args.timestep)
+    return test_sampling_strategy, test_sampling_interval, test_sampling_seed
+
+
+def sampling_regime_label(sampling_strategy, sampling_interval, sampling_seed):
+    if sampling_strategy == 'none':
+        return 'none'
+    label = '{}-r{}'.format(sampling_strategy, int(sampling_interval))
+    if sampling_strategy == 'random_matched':
+        label += '-sseed{}'.format(sampling_seed)
+    return label
+
+
+def effective_sampling_regime(sampling_strategy, sampling_interval, sampling_seed):
+    if sampling_strategy == 'none':
+        return ('none',)
+    if sampling_strategy == 'structured':
+        return ('structured', int(sampling_interval))
+    if sampling_strategy == 'random_matched':
+        return ('random_matched', int(sampling_interval), sampling_seed)
+    raise ValueError('Unknown sampling_strategy {}'.format(sampling_strategy))
+
+
+def sampling_regimes_differ(train_sampling_strategy, train_sampling_interval, train_sampling_seed,
+                            test_sampling_strategy, test_sampling_interval, test_sampling_seed):
+    train_regime = effective_sampling_regime(
+        train_sampling_strategy, train_sampling_interval, train_sampling_seed)
+    test_regime = effective_sampling_regime(
+        test_sampling_strategy, test_sampling_interval, test_sampling_seed)
+    return train_regime != test_regime
+
+
+def test_prediction_path(output_dir, load_state, train_sampling_strategy,
+                         train_sampling_interval, train_sampling_seed,
+                         test_sampling_strategy, test_sampling_interval,
+                         test_sampling_seed):
+    path = os.path.join(output_dir, "test_predictions", os.path.basename(load_state))
+    if not sampling_regimes_differ(train_sampling_strategy, train_sampling_interval, train_sampling_seed,
+                                   test_sampling_strategy, test_sampling_interval, test_sampling_seed):
+        return path + ".csv"
+    suffix = 'testsample-{}'.format(
+        sampling_regime_label(test_sampling_strategy, test_sampling_interval, test_sampling_seed))
+    return path + ".{}.csv".format(suffix)
+
+
 def load_train_val_raw(train_reader, val_reader, discretizer, normalizer, small_part):
     train_raw = utils.load_data(train_reader, discretizer, normalizer, small_part)
     val_raw = utils.load_data(val_reader, discretizer, normalizer, small_part)
@@ -119,6 +184,14 @@ def main():
                         help='Coarse interval used only for measurement selection.')
     parser.add_argument('--sampling_seed', type=int, default=DEFAULT_SAMPLING_SEED,
                         help='Seed for random matched-count sampling; independent of model seed.')
+    parser.add_argument('--test_sampling_strategy', type=str, default=None,
+                        choices=['none', 'structured', 'random_matched'],
+                        help='Test/deployment sampling intervention. Defaults to --sampling_strategy.')
+    parser.add_argument('--test_sampling_interval', type=float, default=None,
+                        choices=[2.0, 4.0, 8.0],
+                        help='Test/deployment coarse interval. Defaults to --sampling_interval.')
+    parser.add_argument('--test_sampling_seed', type=int, default=None,
+                        help='Test/deployment random sampling seed. Defaults to --sampling_seed.')
     parser.add_argument('--print_stats', action='store_true',
                         help='Print fixed-24h cohort counts and prevalence for every horizon, then exit.')
     for action in parser._actions:
@@ -132,7 +205,7 @@ def main():
 
     print(args)
 
-    validate_sampling_args(args.sampling_strategy, args.sampling_interval, args.timestep)
+    test_sampling_strategy, test_sampling_interval, test_sampling_seed = validate_all_sampling_args(args)
 
     if args.print_stats:
         print_stats(args.data)
@@ -280,8 +353,8 @@ def main():
 
     elif args.mode == 'test':
         test_reader = build_reader(args.data, 'test', args.horizon)
-        test_reader = maybe_wrap_reader(test_reader, args.sampling_strategy,
-                                        args.sampling_interval, args.sampling_seed)
+        test_reader = maybe_wrap_reader(test_reader, test_sampling_strategy,
+                                        test_sampling_interval, test_sampling_seed)
         ret = load_test_raw(test_reader, discretizer, normalizer, args.small_part)
 
         data = ret["data"][0]
@@ -292,7 +365,10 @@ def main():
         predictions = np.array(predictions)[:, 0]
         metrics.print_metrics_binary(labels, predictions)
 
-        path = os.path.join(args.output_dir, "test_predictions", os.path.basename(args.load_state)) + ".csv"
+        path = test_prediction_path(args.output_dir, args.load_state,
+                                    args.sampling_strategy, args.sampling_interval,
+                                    args.sampling_seed, test_sampling_strategy,
+                                    test_sampling_interval, test_sampling_seed)
         utils.save_results(names, predictions, labels, path)
 
     else:

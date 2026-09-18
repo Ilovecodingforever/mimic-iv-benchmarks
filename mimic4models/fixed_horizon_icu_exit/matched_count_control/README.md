@@ -139,6 +139,43 @@ python -m mimic4models.create_normalizer_state \
 
 The filename encodes task, sampling strategy, interval, random sampling seed where relevant, downstream timestep, imputation, mask setting, and training example count.
 
+## Observation-frequency distribution shift
+
+Fixed-horizon ICU-exit test runs can evaluate a checkpoint under a different observation-frequency regime than the one used for train and validation. The training flags still define the train/validation regime:
+
+```text
+--sampling_strategy
+--sampling_interval
+--sampling_seed
+```
+
+The test/deployment regime is controlled separately:
+
+```text
+--test_sampling_strategy
+--test_sampling_interval
+--test_sampling_seed
+```
+
+If a `test_sampling_*` argument is omitted, it inherits the corresponding training `sampling_*` value, so existing commands keep their old behavior. For the primary distribution-shift experiment, use `--timestep 1.0` so the downstream sequence resolution is held fixed while only the observation regime changes.
+
+Example `1h -> 4h` evaluation from a standard 1h checkpoint:
+
+```bash
+python -m mimic4models.fixed_horizon_icu_exit.main \
+  --mode test \
+  --timestep 1.0 \
+  --sampling_strategy none \
+  --test_sampling_strategy structured \
+  --test_sampling_interval 4 \
+  --load_state <1h_checkpoint> \
+  ...
+```
+
+The normalizer remains the one associated with the training regime. For `1h -> 8h`, that means the standard 1h training normalizer is used even though the test reader is structured-r8.
+
+The main comparison is `r -> r` versus `1h -> r`. Both models see the same sparse test data, so the difference isolates sensitivity to train/deployment observation-regime mismatch rather than simply having fewer measurements at test time. Matched-regime test predictions keep the existing `<checkpoint>.csv` filename for backward compatibility. Shifted evaluations append the test regime, such as `testsample-structured-r4` or `testsample-random_matched-r4-sseed100`, to prevent multiple evaluations of the same checkpoint from overwriting each other.
+
 ## Checks
 
 Toy edge-case tests:

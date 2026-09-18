@@ -282,6 +282,137 @@ def test_fixed_horizon_normalizer_rejects_no_masks():
         raise AssertionError('fixed_horizon_icu_exit --no-masks did not fail')
 
 
+
+def make_sampling_args(sampling_strategy='none', sampling_interval=4.0, sampling_seed=100,
+                       test_sampling_strategy=None, test_sampling_interval=None,
+                       test_sampling_seed=None, timestep=1.0):
+    class Args(object):
+        pass
+    args = Args()
+    args.sampling_strategy = sampling_strategy
+    args.sampling_interval = sampling_interval
+    args.sampling_seed = sampling_seed
+    args.test_sampling_strategy = test_sampling_strategy
+    args.test_sampling_interval = test_sampling_interval
+    args.test_sampling_seed = test_sampling_seed
+    args.timestep = timestep
+    return args
+
+
+def test_test_sampling_args_omitted_inherit_training_regime():
+    args = make_sampling_args('structured', 4.0, 123)
+    assert fixed_main.resolve_test_sampling_args(args) == ('structured', 4.0, 123)
+    assert fixed_main.validate_all_sampling_args(args) == ('structured', 4.0, 123)
+
+
+def test_train_none_test_structured_r4_resolves_without_changing_training_regime():
+    args = make_sampling_args('none', 4.0, 100,
+                              test_sampling_strategy='structured',
+                              test_sampling_interval=4.0)
+    assert fixed_main.resolve_test_sampling_args(args) == ('structured', 4.0, 100)
+    assert args.sampling_strategy == 'none'
+    assert args.sampling_interval == 4.0
+    assert args.sampling_seed == 100
+
+
+def test_train_structured_r8_test_omitted_resolves_both_to_structured_r8():
+    args = make_sampling_args('structured', 8.0, 100)
+    assert fixed_main.resolve_test_sampling_args(args) == ('structured', 8.0, 100)
+    assert fixed_main.sampling_regime_label(
+        args.sampling_strategy, args.sampling_interval, args.sampling_seed) == 'structured-r8'
+
+
+def test_normalizer_path_uses_training_sampling_args_only():
+    args = make_sampling_args('none', 4.0, 100,
+                              test_sampling_strategy='structured',
+                              test_sampling_interval=8.0)
+    assert fixed_main.resolve_test_sampling_args(args) == ('structured', 8.0, 100)
+    path = fixed_main.default_normalizer_state_path(
+        '/norm', 1.0, 'previous', 321, args.sampling_strategy,
+        args.sampling_interval, args.sampling_seed)
+    assert path == '/norm/fixed_horizon_icu_exit_ts:1.00_impute:previous_start:zero_masks:True_n:321.normalizer'
+    assert 'sampling:structured' not in path
+
+
+def test_test_prediction_filename_preserves_existing_name_for_matched_regimes():
+    none = fixed_main.test_prediction_path('/out', '/states/model.epoch1.state',
+                                           'none', 4.0, 100,
+                                           'none', 8.0, 999)
+    structured = fixed_main.test_prediction_path('/out', '/states/model.epoch1.state',
+                                                 'structured', 4.0, 100,
+                                                 'structured', 4.0, 999)
+    random_matched = fixed_main.test_prediction_path('/out', '/states/model.epoch1.state',
+                                                     'random_matched', 4.0, 777,
+                                                     'random_matched', 4.0, 777)
+    assert none.endswith('/test_predictions/model.epoch1.state.csv')
+    assert structured.endswith('/test_predictions/model.epoch1.state.csv')
+    assert random_matched.endswith('/test_predictions/model.epoch1.state.csv')
+    assert fixed_main.sampling_regimes_differ('none', 4.0, 100, 'none', 8.0, 999) is False
+    assert fixed_main.sampling_regimes_differ('structured', 4.0, 100, 'structured', 4.0, 999) is False
+
+
+def test_shifted_test_prediction_filenames_include_test_regime_and_do_not_collide():
+    matched = fixed_main.test_prediction_path('/out', '/states/model.epoch1.state',
+                                              'none', 4.0, 100,
+                                              'none', 4.0, 100)
+    r4 = fixed_main.test_prediction_path('/out', '/states/model.epoch1.state',
+                                         'none', 4.0, 100,
+                                         'structured', 4.0, 100)
+    r8 = fixed_main.test_prediction_path('/out', '/states/model.epoch1.state',
+                                         'none', 4.0, 100,
+                                         'structured', 8.0, 100)
+    assert matched.endswith('/test_predictions/model.epoch1.state.csv')
+    assert r4.endswith('/test_predictions/model.epoch1.state.testsample-structured-r4.csv')
+    assert r8.endswith('/test_predictions/model.epoch1.state.testsample-structured-r8.csv')
+    assert len(set([matched, r4, r8])) == 3
+
+
+def test_random_matched_shifted_test_prediction_filename_includes_test_seed():
+    path = fixed_main.test_prediction_path('/out', '/states/model.epoch1.state',
+                                           'none', 4.0, 100,
+                                           'random_matched', 4.0, 777)
+    assert path.endswith('/test_predictions/model.epoch1.state.testsample-random_matched-r4-sseed777.csv')
+
+
+def test_random_matched_seed_change_is_an_effective_shift():
+    path = fixed_main.test_prediction_path('/out', '/states/model.epoch1.state',
+                                           'random_matched', 4.0, 100,
+                                           'random_matched', 4.0, 777)
+    assert fixed_main.sampling_regimes_differ('random_matched', 4.0, 100,
+                                              'random_matched', 4.0, 777) is True
+    assert path.endswith('/test_predictions/model.epoch1.state.testsample-random_matched-r4-sseed777.csv')
+
+
+def test_invalid_test_sampling_combination_is_rejected():
+    args = make_sampling_args('none', 4.0, 100,
+                              test_sampling_strategy='structured',
+                              test_sampling_interval=4.0,
+                              timestep=4.0)
+    try:
+        fixed_main.validate_all_sampling_args(args)
+    except ValueError as exc:
+        assert 'requires downstream timestep=1.0' in str(exc)
+    else:
+        raise AssertionError('invalid test sampling/timestep combination did not fail')
+
+
+def test_existing_sampling_behavior_unchanged_when_test_args_omitted():
+    args = make_sampling_args('random_matched', 4.0, 555)
+    assert fixed_main.resolve_test_sampling_args(args) == ('random_matched', 4.0, 555)
+    assert fixed_main.sampling_regime_label(
+        args.sampling_strategy, args.sampling_interval, args.sampling_seed) == 'random_matched-r4-sseed555'
+
+    main_source = inspect.getsource(fixed_main.main)
+    train_block = main_source.split("train_reader = build_reader", 1)[1].split("discretizer = Discretizer", 1)[0]
+    val_block = main_source.split("val_reader = build_reader", 1)[1].split("train_raw, val_raw", 1)[0]
+    assert 'args.sampling_strategy' in train_block
+    assert 'args.sampling_interval' in train_block
+    assert 'args.sampling_seed' in train_block
+    assert 'args.sampling_strategy' in val_block
+    assert 'args.sampling_interval' in val_block
+    assert 'args.sampling_seed' in val_block
+
+
 def test_test_mode_loader_path_does_not_load_train_val_raw():
     calls = []
     old_load_data = fixed_main.utils.load_data
