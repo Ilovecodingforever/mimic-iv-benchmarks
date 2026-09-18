@@ -60,11 +60,18 @@ The existing fixed-horizon ICU-exit training pipeline is reused. The sampler is 
 ```bash
 python -m mimic4models.fixed_horizon_icu_exit.main \
   --network mimic4models/keras_models/lstm.py \
-  --data /path/to/length-of-stay \
+  --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay \
+  --dim 16 \
+  --depth 2 \
+  --dropout 0.3 \
+  --batch_size 8
   --horizon 12 \
   --timestep 1.0 \
-  --sampling_strategy structured \
   --sampling_interval 4
+  --normalizer_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers \
+  --sampling_strategy structured \
+  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/fixed_horizon_icu_exit/structured \
+  --seed 0
 ```
 
 For C:
@@ -72,12 +79,19 @@ For C:
 ```bash
 python -m mimic4models.fixed_horizon_icu_exit.main \
   --network mimic4models/keras_models/lstm.py \
-  --data /path/to/length-of-stay \
+  --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay \
   --horizon 12 \
+  --dim 16 \
+  --depth 2 \
+  --dropout 0.3 \
+  --batch_size 8
   --timestep 1.0 \
-  --sampling_strategy random_matched \
   --sampling_interval 4 \
-  --sampling_seed 100
+  --sampling_seed 100 \
+  --normalizer_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers \
+  --sampling_strategy random_matched \
+  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/fixed_horizon_icu_exit/random_matched \
+  --seed 0
 ```
 
 `structured` and `random_matched` require `--timestep 1.0`. The sampling interval and the downstream timestep are different concepts: `--sampling_interval 4 --timestep 1.0` means a 4h measurement-selection intervention represented on a 1h model grid.
@@ -93,17 +107,32 @@ Create B/C normalizers with the existing normalizer machinery plus the sampling 
 ```bash
 python -m mimic4models.create_normalizer_state \
   --task fixed_horizon_icu_exit \
-  --data /path/to/length-of-stay \
+  --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay \
   --horizon 12 \
   --timestep 1.0 \
   --impute_strategy previous \
   --start_time zero \
   --store_masks \
-  --sampling_strategy random_matched \
   --sampling_interval 4 \
   --sampling_seed 100 \
-  --output_dir /path/to/normalizers
+  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers \
+  --sampling_strategy random_matched 
 ```
+
+```bash
+python -m mimic4models.create_normalizer_state \
+  --task fixed_horizon_icu_exit \
+  --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay \
+  --horizon 12 \
+  --timestep 1.0 \
+  --impute_strategy previous \
+  --start_time zero \
+  --store_masks \
+  --sampling_interval 4 \
+  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers \
+  --sampling_strategy structured 
+```
+
 
 The filename encodes task, sampling strategy, interval, random sampling seed where relevant, downstream timestep, imputation, mask setting, and training example count.
 

@@ -122,6 +122,8 @@ else:
 if args.mode == 'train':
 
     # Prepare training
+    csv_append = keras_utils.prepare_keras_training_run(
+        args.output_dir, model.final_name, args.load_state, args.mode)
     path = os.path.join(args.output_dir, 'keras_states/' + model.final_name + '.chunk{epoch}.test{val_loss}.state')
 
     metrics_callback = keras_utils.DecompensationMetrics(train_data_gen=train_data_gen,
@@ -139,7 +141,7 @@ if args.mode == 'train':
     if not os.path.exists(keras_logs):
         os.makedirs(keras_logs)
     csv_logger = CSVLogger(os.path.join(keras_logs, model.final_name + '.csv'),
-                           append=True, separator=';')
+                           append=csv_append, separator=';')
 
     print("==> training")
     model.fit_generator(generator=train_data_gen,

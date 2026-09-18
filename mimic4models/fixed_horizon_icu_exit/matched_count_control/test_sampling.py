@@ -18,7 +18,7 @@ from mimic4models.fixed_horizon_icu_exit.matched_count_control.validate_sampling
     structured_vs_coarse_value_mismatches)
 from mimic4models.fixed_horizon_icu_exit.matched_count_control.sampling import (
     apply_sampling_to_example, cell_counts_by_channel, choose_matched_candidates,
-    mask_counts_by_channel, random_matched_cells, random_matched_sample,
+    mask_counts_by_channel, nonempty_cell_count, random_matched_cells, random_matched_sample,
     reconstruct_sparse_raw, select_last_raw_observation_per_bin, structured_cells,
     structured_sample)
 
@@ -133,6 +133,26 @@ def test_random_matched_count_after_1h_discretization():
     cd, ch = transformed(c, 1, HEADER)
     assert mask_counts_by_channel(bd, bh)['Heart Rate'] == 3
     assert mask_counts_by_channel(cd, ch)['Heart Rate'] == 3
+
+
+def test_model_visible_1h_observed_cells_can_be_less_than_raw_obs():
+    X = a([['2.1', '70', '', ''], ['2.4', '72', '', ''], ['2.9', '75', '', ''],
+           ['3.5', '77', '', ''], ['5.1', '80', '', ''], ['9.1', '90', '', '']])
+    b, _ = structured_sample(X, HEADER, 4)
+    c, _ = random_matched_sample(X, HEADER, 4, sampling_seed=100, stay_name='stay')
+
+    ax, ah = transformed(X, 1, HEADER)
+    bx, bh = transformed(b, 1, HEADER)
+    cx, ch = transformed(c, 1, HEADER)
+    raw_obs = nonempty_cell_count(X)
+    a_1h = sum(mask_counts_by_channel(ax, ah).values())
+    b_1h = sum(mask_counts_by_channel(bx, bh).values())
+    c_1h = sum(mask_counts_by_channel(cx, ch).values())
+
+    assert raw_obs == 6
+    assert raw_obs > a_1h
+    assert a_1h >= b_1h
+    assert b_1h == c_1h
 
 
 def test_deterministic_sampling_and_seed_count_invariance():

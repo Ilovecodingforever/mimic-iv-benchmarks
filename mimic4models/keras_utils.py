@@ -1,6 +1,7 @@
 from __future__ import absolute_import
 from __future__ import print_function
 
+import os
 import numpy as np
 from mimic4models import metrics
 
@@ -11,6 +12,81 @@ if K.backend() == 'tensorflow':
     import tensorflow as tf
 
 from keras.layers import Layer
+
+
+
+
+# ===================== RUN ARTIFACTS ===================== #
+
+
+def _safe_remove_file(path):
+    if os.path.isfile(path):
+        os.remove(path)
+        return 1
+    return 0
+
+
+def _iter_prediction_dirs(output_dir):
+    root = os.path.join(output_dir, 'test_predictions')
+    if not os.path.isdir(root):
+        return
+    yield root
+    for name in os.listdir(root):
+        path = os.path.join(root, name)
+        if os.path.isdir(path):
+            yield path
+
+
+def cleanup_existing_run_artifacts(output_dir, model_final_name):
+    """Remove artifacts belonging to one exact model.final_name.
+
+    This intentionally uses only exact log filename matching and checkpoint /
+    prediction basenames beginning with ``model_final_name + '.'``. It never
+    removes directories or broad patterns such as ``*.csv``.
+    """
+    if not model_final_name:
+        raise ValueError('Refusing to cleanup run artifacts with an empty model_final_name.')
+
+    removed = {'logs': 0, 'checkpoints': 0, 'predictions': 0}
+    prefix = model_final_name + '.'
+
+    log_path = os.path.join(output_dir, 'keras_logs', model_final_name + '.csv')
+    removed['logs'] += _safe_remove_file(log_path)
+
+    state_dir = os.path.join(output_dir, 'keras_states')
+    if os.path.isdir(state_dir):
+        for name in os.listdir(state_dir):
+            if name.startswith(prefix) and name.endswith('.state'):
+                removed['checkpoints'] += _safe_remove_file(os.path.join(state_dir, name))
+
+    for pred_dir in _iter_prediction_dirs(output_dir) or []:
+        for name in os.listdir(pred_dir):
+            path = os.path.join(pred_dir, name)
+            if os.path.isfile(path) and name.startswith(prefix) and name.endswith('.state.csv'):
+                removed['predictions'] += _safe_remove_file(path)
+
+    total = removed['logs'] + removed['checkpoints'] + removed['predictions']
+    print('Fresh run cleanup for {}: removed {} log(s), {} checkpoint(s), {} prediction file(s).'.format(
+        model_final_name, removed['logs'], removed['checkpoints'], removed['predictions']))
+    if total == 0:
+        print('Fresh run cleanup for {}: no prior artifacts found.'.format(model_final_name))
+    return removed
+
+
+def prepare_keras_training_run(output_dir, model_final_name, load_state, mode='train'):
+    """Prepare artifact behavior for train/test/resume modes.
+
+    Returns the append flag to pass to CSVLogger.
+    """
+    append = (load_state != '')
+    if mode != 'train':
+        return append
+    if append:
+        print('Resume run for {}: preserving existing logs, checkpoints, and predictions.'.format(
+            model_final_name))
+        return True
+    cleanup_existing_run_artifacts(output_dir, model_final_name)
+    return False
 
 
 # ===================== METRICS ===================== #

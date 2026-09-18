@@ -74,6 +74,10 @@ def add_counts(total, counts):
         total[key] = total.get(key, 0) + value
 
 
+def total_counts(counts):
+    return sum(counts.values())
+
+
 def changed(before, after):
     if before.shape != after.shape:
         return True
@@ -91,11 +95,15 @@ def validate_interval(reader, interval, num_examples, sampling_seed, imputation)
              'raw_total': 0,
              'b_total': 0,
              'c_total': 0,
+             'a_1h_observed_cells': 0,
+             'b_1h_observed_cells': 0,
+             'c_1h_observed_cells': 0,
              'affected': 0,
              'count_mismatches': 0,
              'mask_mismatches': 0,
              'after_24': 0,
              'structured_vs_coarse_value_mismatches': 0}
+    a_1h_by_channel = {}
     b_by_channel = {}
     c_by_channel = {}
 
@@ -131,12 +139,18 @@ def validate_interval(reader, interval, num_examples, sampling_seed, imputation)
             if b_counts[channel] != c_counts.get(channel, 0):
                 stats['count_mismatches'] += 1
 
-        bx, bh = d1.transform(b['X'], end=b['t'])
-        cx, ch = d1.transform(c['X'], end=c['t'])
-        if bx.shape[0] != 24 or cx.shape[0] != 24:
-            raise AssertionError('B/C sequence length is not 24 for {}'.format(raw['name']))
+        ax, ah = d1.transform(raw['X'], header=raw['header'], end=raw['t'])
+        bx, bh = d1.transform(b['X'], header=b['header'], end=b['t'])
+        cx, ch = d1.transform(c['X'], header=c['header'], end=c['t'])
+        if ax.shape[0] != 24 or bx.shape[0] != 24 or cx.shape[0] != 24:
+            raise AssertionError('A/B/C sequence length is not 24 for {}'.format(raw['name']))
+        a_masks = mask_counts_by_channel(ax, ah)
         b_masks = mask_counts_by_channel(bx, bh)
         c_masks = mask_counts_by_channel(cx, ch)
+        add_counts(a_1h_by_channel, a_masks)
+        stats['a_1h_observed_cells'] += total_counts(a_masks)
+        stats['b_1h_observed_cells'] += total_counts(b_masks)
+        stats['c_1h_observed_cells'] += total_counts(c_masks)
         for channel in b_masks:
             if b_masks[channel] != c_masks.get(channel, 0):
                 stats['mask_mismatches'] += 1
@@ -154,18 +168,34 @@ def validate_interval(reader, interval, num_examples, sampling_seed, imputation)
         raise AssertionError('raw B/C count mismatches: {}'.format(stats['count_mismatches']))
     if stats['mask_mismatches']:
         raise AssertionError('post-1h mask mismatches: {}'.format(stats['mask_mismatches']))
+    if stats['b_1h_observed_cells'] != stats['c_1h_observed_cells']:
+        raise AssertionError('global B/C 1h observed-cell mismatch: {} vs {}'.format(
+            stats['b_1h_observed_cells'], stats['c_1h_observed_cells']))
     if stats['after_24']:
         raise AssertionError('selected observations after 24h: {}'.format(stats['after_24']))
     if stats['structured_vs_coarse_value_mismatches']:
         raise AssertionError('structured vs coarse value mismatches: {}'.format(
             stats['structured_vs_coarse_value_mismatches']))
 
-    print('r={} examples={} raw_obs={} B_obs={} C_obs={} retention={:.6f} affected={}'.format(
-        interval, stats['examples'], stats['raw_total'], stats['b_total'], stats['c_total'],
-        float(stats['b_total']) / stats['raw_total'] if stats['raw_total'] else 0.0,
-        stats['affected']))
+    b_vs_raw = float(stats['b_total']) / stats['raw_total'] if stats['raw_total'] else 0.0
+    b_vs_a1h = (float(stats['b_1h_observed_cells']) / stats['a_1h_observed_cells']
+                if stats['a_1h_observed_cells'] else 0.0)
+    c_vs_a1h = (float(stats['c_1h_observed_cells']) / stats['a_1h_observed_cells']
+                if stats['a_1h_observed_cells'] else 0.0)
+    print('r={} examples={}'.format(interval, stats['examples']))
+    print('  raw_obs={}'.format(stats['raw_total']))
+    print('  A_1h_observed_cells={}'.format(stats['a_1h_observed_cells']))
+    print('  B_obs={}'.format(stats['b_total']))
+    print('  C_obs={}'.format(stats['c_total']))
+    print('  B_1h_observed_cells={}'.format(stats['b_1h_observed_cells']))
+    print('  C_1h_observed_cells={}'.format(stats['c_1h_observed_cells']))
+    print('  B_vs_raw_retention={:.6f}'.format(b_vs_raw))
+    print('  B_vs_A1h_retention={:.6f}'.format(b_vs_a1h))
+    print('  C_vs_A1h_retention={:.6f}'.format(c_vs_a1h))
+    print('  affected={}'.format(stats['affected']))
     print('  mismatched patient-variable counts=0 post_1h_mask_mismatches=0 after_24=0 '
           'structured_vs_coarse_value_mismatches=0')
+    print('  per-variable A 1h mask counts:', a_1h_by_channel)
     print('  per-variable B counts:', b_by_channel)
     print('  per-variable C counts:', c_by_channel)
 

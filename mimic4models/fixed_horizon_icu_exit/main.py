@@ -247,6 +247,8 @@ def main():
             train_raw = extend_labels(train_raw)
             val_raw = extend_labels(val_raw)
 
+        csv_append = keras_utils.prepare_keras_training_run(
+            args.output_dir, model.final_name, args.load_state, args.mode)
         path = os.path.join(args.output_dir, 'keras_states/' + model.final_name + '.epoch{epoch}.test{val_loss}.state')
 
         metrics_callback = keras_utils.InHospitalMortalityMetrics(train_data=train_raw,
@@ -263,7 +265,7 @@ def main():
         if not os.path.exists(keras_logs):
             os.makedirs(keras_logs)
         csv_logger = CSVLogger(os.path.join(keras_logs, model.final_name + '.csv'),
-                               append=True, separator=';')
+                               append=csv_append, separator=';')
 
         print("==> training")
         model.fit(x=train_raw[0],
