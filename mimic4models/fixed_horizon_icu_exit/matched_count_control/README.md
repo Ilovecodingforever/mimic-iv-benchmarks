@@ -140,7 +140,10 @@ python -m mimic4models.create_normalizer_state \
 ```
 
 
-
+python -m mimic4models.fixed_horizon_icu_exit.main \
+    --timestep 0 \
+    --print_raw_stats \
+    --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay
 
 
 

@@ -4,6 +4,7 @@ from __future__ import print_function
 import inspect
 import os
 import sys
+import tempfile
 
 import numpy as np
 
@@ -14,6 +15,7 @@ if ROOT not in sys.path:
 from mimic4models.preprocessing import Discretizer, discretizer_bin_id
 from mimic4models.create_normalizer_state import validate_normalizer_args
 from mimic4models.fixed_horizon_icu_exit import main as fixed_main
+from mimic4models.fixed_horizon_icu_exit.raw import RawObservedNormalizer, RawSequenceEncoder
 from mimic4models.fixed_horizon_icu_exit.matched_count_control.validate_sampling import (
     structured_vs_coarse_value_mismatches)
 from mimic4models.fixed_horizon_icu_exit.matched_count_control.sampling import (
@@ -383,7 +385,11 @@ def test_random_matched_seed_change_is_an_effective_shift():
     assert path.endswith('/test_predictions/model.epoch1.state.testsample-random_matched-r4-sseed777.csv')
 
 
-def test_invalid_test_sampling_combination_is_rejected():
+def test_structured_and_random_sampling_allow_raw_or_1h_downstream_only():
+    fixed_main.validate_all_sampling_args(make_sampling_args('structured', 4.0, timestep=1.0))
+    fixed_main.validate_all_sampling_args(make_sampling_args('structured', 4.0, timestep=0.0))
+    fixed_main.validate_all_sampling_args(make_sampling_args('random_matched', 4.0, timestep=0.0))
+
     args = make_sampling_args('none', 4.0, 100,
                               test_sampling_strategy='structured',
                               test_sampling_interval=4.0,
@@ -391,10 +397,73 @@ def test_invalid_test_sampling_combination_is_rejected():
     try:
         fixed_main.validate_all_sampling_args(args)
     except ValueError as exc:
-        assert 'requires downstream timestep=1.0' in str(exc)
+        assert 'requires downstream timestep=0.0 or 1.0' in str(exc)
     else:
         raise AssertionError('invalid test sampling/timestep combination did not fail')
 
+
+
+def test_raw_normalizer_path_is_distinct_from_gridded_path():
+    dense = fixed_main.default_normalizer_state_path('/norm', 0.0, 'previous', 321,
+                                                     'none', 4.0, 100)
+    structured = fixed_main.default_normalizer_state_path('/norm', 0.0, 'previous', 321,
+                                                          'structured', 4.0, 100)
+    random_path = fixed_main.default_normalizer_state_path('/norm', 0.0, 'previous', 321,
+                                                           'random_matched', 4.0, 777)
+    assert dense == '/norm/fixed_horizon_icu_exit_raw_ts:0.00_observed_only_n:321.normalizer'
+    assert structured == '/norm/fixed_horizon_icu_exit_raw_sampling:structured_r:4_ts:0.00_observed_only_n:321.normalizer'
+    assert random_path == '/norm/fixed_horizon_icu_exit_raw_sampling:random_matched_r:4_seed:777_ts:0.00_observed_only_n:321.normalizer'
+
+
+def test_raw_sequence_encoder_uses_rows_no_imputation_and_masks():
+    encoder = RawSequenceEncoder()
+    X = a([['0.13', '82', '', ''], ['0.27', '', '110', '']], HEADER)
+    data, header = encoder.transform(X, header=HEADER, end=24.0)
+    names = header.split(',')
+    assert data.shape == (2, 76)
+    assert data[0, names.index('Heart Rate')] == 82.0
+    assert data[1, names.index('Heart Rate')] == 0.0
+    assert data[0, names.index('Glucose')] == 0.0
+    assert data[1, names.index('Glucose')] == 110.0
+    assert data[0, names.index('mask->Heart Rate')] == 1.0
+    assert data[1, names.index('mask->Heart Rate')] == 0.0
+    assert data[0, names.index('mask->Glucose')] == 0.0
+    assert data[1, names.index('mask->Glucose')] == 1.0
+
+
+def test_raw_sequence_encoder_uses_discretizer_categorical_vocabulary():
+    encoder = RawSequenceEncoder()
+    data, header = encoder.transform(a([['1.0', '1.0']], CAT_HEADER), header=CAT_HEADER, end=24.0)
+    names = header.split(',')
+    assert data.shape == (1, 76)
+    assert data[0, names.index('Capillary refill rate->1.0')] == 1.0
+    assert data[0, names.index('Capillary refill rate->0.0')] == 0.0
+    assert data[0, names.index('mask->Capillary refill rate')] == 1.0
+
+
+def test_raw_observed_normalizer_uses_observed_continuous_values_only():
+    encoder = RawSequenceEncoder()
+    X = a([['0.1', '70', '', ''], ['0.2', '', '120', ''], ['0.3', '90', '', '']], HEADER)
+    data, header = encoder.transform(X, header=HEADER, end=24.0)
+    names = header.split(',')
+    normalizer = RawObservedNormalizer(encoder.continuous_value_fields(),
+                                       encoder.continuous_mask_fields())
+    normalizer._feed_data(data)
+    tmp = tempfile.NamedTemporaryFile(delete=False)
+    tmp.close()
+    try:
+        normalizer._save_params(tmp.name)
+        loaded = RawObservedNormalizer(encoder.continuous_value_fields(),
+                                       encoder.continuous_mask_fields())
+        loaded.load_params(tmp.name)
+        transformed = loaded.transform(data)
+    finally:
+        os.unlink(tmp.name)
+    hr = names.index('Heart Rate')
+    hr_mask = names.index('mask->Heart Rate')
+    assert abs(transformed[0, hr] + transformed[2, hr]) < 1e-12
+    assert transformed[1, hr] == 0.0
+    assert transformed[1, hr_mask] == 0.0
 
 def test_existing_sampling_behavior_unchanged_when_test_args_omitted():
     args = make_sampling_args('random_matched', 4.0, 555)

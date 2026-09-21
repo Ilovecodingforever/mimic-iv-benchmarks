@@ -149,8 +149,11 @@ def validate_sampling_args(strategy, sampling_interval, downstream_timestep):
         return
     if int(sampling_interval) != sampling_interval or int(sampling_interval) not in VALID_INTERVALS:
         raise ValueError('sampling_interval must be one of {}'.format(', '.join(map(str, VALID_INTERVALS))))
-    if abs(float(downstream_timestep) - 1.0) > DISCRETIZER_EPS:
-        raise ValueError('structured/random_matched sampling requires downstream timestep=1.0; '
+    downstream_timestep = float(downstream_timestep)
+    valid_downstream = (abs(downstream_timestep - 1.0) <= DISCRETIZER_EPS or
+                        abs(downstream_timestep - 0.0) <= DISCRETIZER_EPS)
+    if not valid_downstream:
+        raise ValueError('structured/random_matched sampling requires downstream timestep=0.0 or 1.0; '
                          'got {}'.format(downstream_timestep))
 
 

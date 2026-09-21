@@ -13,6 +13,9 @@ from mimic4models import common_utils
 from mimic4models import metrics
 from mimic4models.in_hospital_mortality import utils
 from mimic4models.preprocessing import Discretizer, Normalizer
+from mimic4models.fixed_horizon_icu_exit.raw import (
+    RawObservedNormalizer, RawSequenceEncoder, is_raw_timestep, load_raw_data,
+    print_raw_sequence_length_stats)
 from mimic4models.fixed_horizon_icu_exit.matched_count_control.sampling import (
     DEFAULT_SAMPLING_SEED, SamplingReader, validate_sampling_args)
 
@@ -52,7 +55,18 @@ def validate_data(data_dir):
 def default_normalizer_state_path(normalizer_dir, timestep, imputation, n_examples,
                                   sampling_strategy='none', sampling_interval=None,
                                   sampling_seed=DEFAULT_SAMPLING_SEED):
-    if sampling_strategy == 'none':
+    if is_raw_timestep(timestep):
+        if sampling_strategy == 'none':
+            file_name = 'fixed_horizon_icu_exit_raw_ts:0.00_observed_only_n:{}.normalizer'.format(
+                n_examples)
+        else:
+            seed_part = ''
+            if sampling_strategy == 'random_matched':
+                seed_part = '_seed:{}'.format(sampling_seed)
+            file_name = ('fixed_horizon_icu_exit_raw_sampling:{}_r:{}{}'
+                         '_ts:0.00_observed_only_n:{}.normalizer').format(
+                             sampling_strategy, int(sampling_interval), seed_part, n_examples)
+    elif sampling_strategy == 'none':
         file_name = 'fixed_horizon_icu_exit_ts:{:.2f}_impute:{}_start:zero_masks:True_n:{}.normalizer'.format(
             timestep, imputation, n_examples)
     else:
@@ -151,14 +165,21 @@ def test_prediction_path(output_dir, load_state, train_sampling_strategy,
     return path + ".{}.csv".format(suffix)
 
 
-def load_train_val_raw(train_reader, val_reader, discretizer, normalizer, small_part):
-    train_raw = utils.load_data(train_reader, discretizer, normalizer, small_part)
-    val_raw = utils.load_data(val_reader, discretizer, normalizer, small_part)
+def load_train_val_raw(train_reader, val_reader, representation, normalizer, small_part, raw_mode=False):
+    if raw_mode:
+        train_raw = load_raw_data(train_reader, representation, normalizer, small_part)
+        val_raw = load_raw_data(val_reader, representation, normalizer, small_part)
+    else:
+        train_raw = utils.load_data(train_reader, representation, normalizer, small_part)
+        val_raw = utils.load_data(val_reader, representation, normalizer, small_part)
     return train_raw, val_raw
 
 
-def load_test_raw(test_reader, discretizer, normalizer, small_part):
-    return utils.load_data(test_reader, discretizer, normalizer, small_part,
+def load_test_raw(test_reader, representation, normalizer, small_part, raw_mode=False):
+    if raw_mode:
+        return load_raw_data(test_reader, representation, normalizer, small_part,
+                             return_names=True)
+    return utils.load_data(test_reader, representation, normalizer, small_part,
                            return_names=True)
 
 
@@ -194,14 +215,16 @@ def main():
                         help='Test/deployment random sampling seed. Defaults to --sampling_seed.')
     parser.add_argument('--print_stats', action='store_true',
                         help='Print fixed-24h cohort counts and prevalence for every horizon, then exit.')
+    parser.add_argument('--print_raw_sequence_stats', action='store_true',
+                        help='Print raw sequence-length statistics for the training split, then exit.')
     for action in parser._actions:
         if action.dest == 'network':
             action.required = False
 
     args = parser.parse_args()
 
-    if not args.print_stats and args.network is None:
-        parser.error('--network is required unless --print_stats is used')
+    if not args.print_stats and not args.print_raw_sequence_stats and args.network is None:
+        parser.error('--network is required unless --print_stats or --print_raw_sequence_stats is used')
 
     print(args)
 
@@ -209,6 +232,16 @@ def main():
 
     if args.print_stats:
         print_stats(args.data)
+        return
+
+    raw_mode = is_raw_timestep(args.timestep)
+    if args.print_raw_sequence_stats:
+        if not raw_mode:
+            raise ValueError('--print_raw_sequence_stats requires --timestep 0')
+        stats_reader = build_reader(args.data, 'train', args.horizon)
+        stats_reader = maybe_wrap_reader(stats_reader, args.sampling_strategy,
+                                         args.sampling_interval, args.sampling_seed)
+        print_raw_sequence_length_stats(stats_reader, RawSequenceEncoder(), args.small_part)
         return
 
     import tensorflow as tf
@@ -230,16 +263,21 @@ def main():
     train_reader = maybe_wrap_reader(train_reader, args.sampling_strategy,
                                      args.sampling_interval, args.sampling_seed)
 
-    discretizer = Discretizer(timestep=float(args.timestep),
-                              store_masks=True,
-                              impute_strategy='previous',
-                              start_time='zero')
+    if raw_mode:
+        representation = RawSequenceEncoder()
+        feature_header = representation.header()
+        normalizer = RawObservedNormalizer(representation.continuous_value_fields(),
+                                           representation.continuous_mask_fields())
+    else:
+        representation = Discretizer(timestep=float(args.timestep),
+                                     store_masks=True,
+                                     impute_strategy='previous',
+                                     start_time='zero')
+        first_train = train_reader.read_example(0)
+        feature_header = representation.transform(first_train["X"], end=first_train["t"])[1].split(',')
+        cont_channels = [i for (i, x) in enumerate(feature_header) if x.find("->") == -1]
+        normalizer = Normalizer(fields=cont_channels)
 
-    first_train = train_reader.read_example(0)
-    discretizer_header = discretizer.transform(first_train["X"], end=first_train["t"])[1].split(',')
-    cont_channels = [i for (i, x) in enumerate(discretizer_header) if x.find("->") == -1]
-
-    normalizer = Normalizer(fields=cont_channels)
     normalizer_state = args.normalizer_state
     if normalizer_state is None:
         normalizer_state = default_normalizer_state_path(
@@ -251,7 +289,7 @@ def main():
     normalizer.load_params(normalizer_state)
 
     args_dict = dict(args._get_kwargs())
-    args_dict['header'] = discretizer_header
+    args_dict['header'] = feature_header
     args_dict['task'] = 'ihm'
     args_dict['target_repl'] = target_repl
     args_dict['sampling_strategy'] = args.sampling_strategy
@@ -304,7 +342,8 @@ def main():
         val_reader = maybe_wrap_reader(val_reader, args.sampling_strategy,
                                        args.sampling_interval, args.sampling_seed)
         train_raw, val_raw = load_train_val_raw(train_reader, val_reader,
-                                                discretizer, normalizer, args.small_part)
+                                                representation, normalizer, args.small_part,
+                                                raw_mode=raw_mode)
 
         if target_repl:
             T = train_raw[0][0].shape[0]
@@ -355,7 +394,8 @@ def main():
         test_reader = build_reader(args.data, 'test', args.horizon)
         test_reader = maybe_wrap_reader(test_reader, test_sampling_strategy,
                                         test_sampling_interval, test_sampling_seed)
-        ret = load_test_raw(test_reader, discretizer, normalizer, args.small_part)
+        ret = load_test_raw(test_reader, representation, normalizer, args.small_part,
+                            raw_mode=raw_mode)
 
         data = ret["data"][0]
         labels = ret["data"][1]

@@ -8,6 +8,8 @@ from mimic4benchmark.readers import FixedHorizonIcuExitReader
 from mimic4benchmark.readers import PhenotypingReader
 from mimic4benchmark.readers import MultitaskReader
 from mimic4models.preprocessing import Discretizer, Normalizer
+from mimic4models.fixed_horizon_icu_exit.raw import (
+    RawObservedNormalizer, RawSequenceEncoder, is_raw_timestep)
 from mimic4models.fixed_horizon_icu_exit.main import default_normalizer_state_path
 from mimic4models.fixed_horizon_icu_exit.matched_count_control.sampling import (
     DEFAULT_SAMPLING_SEED, SamplingReader, validate_sampling_args)
@@ -25,6 +27,8 @@ def validate_normalizer_args(args):
     if args.task == 'fixed_horizon_icu_exit' and not args.store_masks:
         raise ValueError('fixed_horizon_icu_exit normalizers require masks because the training '
                          'pipeline uses store_masks=True and the filename convention assumes masks:True')
+    if is_raw_timestep(args.timestep) and args.task != 'fixed_horizon_icu_exit':
+        raise ValueError('--timestep 0 raw mode is implemented only for fixed_horizon_icu_exit')
 
 
 def main():
@@ -91,18 +95,21 @@ def main():
         reader = SamplingReader(reader, args.sampling_strategy,
                                 int(args.sampling_interval), args.sampling_seed)
 
-    # create the discretizer
-    discretizer = Discretizer(timestep=args.timestep,
-                              store_masks=args.store_masks,
-                              impute_strategy=args.impute_strategy,
-                              start_time=args.start_time)
-    first = reader.read_example(0)
-    discretizer_header = discretizer.transform(first['X'], end=first['t'])[1].split(',')
-    continuous_channels = [i for (i, x) in enumerate(discretizer_header)
-                           if x.find("->") == -1 and not x.startswith('mask->')]
-
-    # create the normalizer
-    normalizer = Normalizer(fields=continuous_channels)
+    raw_mode = is_raw_timestep(args.timestep)
+    if raw_mode:
+        representation = RawSequenceEncoder()
+        normalizer = RawObservedNormalizer(representation.continuous_value_fields(),
+                                           representation.continuous_mask_fields())
+    else:
+        representation = Discretizer(timestep=args.timestep,
+                                     store_masks=args.store_masks,
+                                     impute_strategy=args.impute_strategy,
+                                     start_time=args.start_time)
+        first = reader.read_example(0)
+        representation_header = representation.transform(first['X'], end=first['t'])[1].split(',')
+        continuous_channels = [i for (i, x) in enumerate(representation_header)
+                               if x.find("->") == -1 and not x.startswith('mask->')]
+        normalizer = Normalizer(fields=continuous_channels)
 
     # read all examples and store the state of the normalizer
     n_samples = args.n_samples
@@ -113,7 +120,7 @@ def main():
         if i % 1000 == 0:
             print('Processed {} / {} samples'.format(i, n_samples), end='\r')
         ret = reader.read_example(i)
-        data, new_header = discretizer.transform(ret['X'], end=ret['t'])
+        data, new_header = representation.transform(ret['X'], header=ret['header'], end=ret['t'])
         normalizer._feed_data(data)
     print('\n')
 
