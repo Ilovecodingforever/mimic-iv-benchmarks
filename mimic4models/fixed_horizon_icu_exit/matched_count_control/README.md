@@ -74,6 +74,9 @@ python -m mimic4models.fixed_horizon_icu_exit.main \
   --seed 0
 ```
 
+
+
+
 For C:
 
 ```bash
@@ -135,6 +138,26 @@ python -m mimic4models.create_normalizer_state \
   --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers \
   --sampling_strategy structured 
 ```
+
+
+for seed in 0 1 2 3 4; do
+python -m mimic4models.fixed_horizon_icu_exit.main \
+  --network mimic4models/keras_models/lstm.py \
+  --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay \
+  --dim 16 \
+  --depth 2 \
+  --dropout 0.3 \
+  --batch_size 8 \
+  --horizon 12 \
+  --timestep 1.0 \
+  --sampling_interval 4 \
+  --normalizer_state /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers/fixed_horizon_icu_exit_ts:1.00_impute:previous_start:zero_masks:True_n:21860.normalizer \
+  --sampling_strategy structured \
+  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/fixed_horizon_icu_exit/structured_r4_dense_norm_control/12h \
+  --seed "$seed"
+done  
+
+
 
 
 The filename encodes task, sampling strategy, interval, random sampling seed where relevant, downstream timestep, imputation, mask setting, and training example count.

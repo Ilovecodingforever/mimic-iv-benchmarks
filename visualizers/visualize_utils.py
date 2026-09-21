@@ -331,9 +331,13 @@ def plot_contrast_ci(ax, df, x_col, y_col="mean_difference", low_col="patient_bo
     ax.grid(axis="y", alpha=0.25)
     return ax
 
-def exact_prediction_for_checkpoint(results_dir, horizon_or_timestep_dir, checkpoint):
+def expected_prediction_for_checkpoint(results_dir, horizon_or_timestep_dir, checkpoint):
     pred_dir = results_dir / "{}h".format(horizon_or_timestep_dir) / "test_predictions"
-    expected = pred_dir / (checkpoint.name + ".csv")
+    return pred_dir / (checkpoint.name + ".csv")
+
+
+def exact_prediction_for_checkpoint(results_dir, horizon_or_timestep_dir, checkpoint):
+    expected = expected_prediction_for_checkpoint(results_dir, horizon_or_timestep_dir, checkpoint)
     return expected if expected.exists() else None
 
 
