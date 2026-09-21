@@ -441,6 +441,36 @@ def test_raw_sequence_encoder_uses_discretizer_categorical_vocabulary():
     assert data[0, names.index('mask->Capillary refill rate')] == 1.0
 
 
+
+def test_load_raw_data_uses_shared_header_from_read_chunk():
+    from mimic4models.fixed_horizon_icu_exit.raw import load_raw_data
+
+    class ToyReader(object):
+        def __init__(self):
+            self.examples = [
+                {'X': a([['0.1', '70', '', '']], HEADER), 't': 24.0, 'y': 0,
+                 'header': HEADER, 'name': 'a.csv'},
+                {'X': a([['0.2', '', '120', '']], HEADER), 't': 24.0, 'y': 1,
+                 'header': HEADER, 'name': 'b.csv'},
+            ]
+            self.i = 0
+
+        def get_number_of_examples(self):
+            return len(self.examples)
+
+        def read_next(self):
+            ret = self.examples[self.i]
+            self.i += 1
+            return ret
+
+    encoder = RawSequenceEncoder()
+    ret = load_raw_data(ToyReader(), encoder, None, return_names=True)
+    names = encoder.header()
+    assert ret['names'] == ['a.csv', 'b.csv']
+    assert ret['data'][0].shape == (2, 1, 76)
+    assert ret['data'][0][0, 0, names.index('Heart Rate')] == 70.0
+    assert ret['data'][0][1, 0, names.index('Glucose')] == 120.0
+
 def test_raw_observed_normalizer_uses_observed_continuous_values_only():
     encoder = RawSequenceEncoder()
     X = a([['0.1', '70', '', ''], ['0.2', '', '120', ''], ['0.3', '90', '', '']], HEADER)

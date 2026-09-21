@@ -187,8 +187,9 @@ def load_raw_data(reader, encoder, normalizer, small_part=False, return_names=Fa
     if small_part:
         n_examples = min(n_examples, 1000)
     ret = common_utils.read_chunk(reader, n_examples)
+    header = ret['header']
     data = [encoder.transform(X, header=header, end=t)[0]
-            for (X, header, t) in zip(ret['X'], ret['header'], ret['t'])]
+            for (X, t) in zip(ret['X'], ret['t'])]
     if normalizer is not None:
         data = [normalizer.transform(X) for X in data]
     data = common_utils.pad_zeros(data)
