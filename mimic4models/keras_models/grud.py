@@ -107,6 +107,8 @@ class Network(Model):
                  depth=1, input_dim=76, header=None, **kwargs):
 
         print('==> not used params in network class:', kwargs.keys())
+        if depth != 1:
+            raise ValueError('Current GRU-D implementation supports only depth=1.')
         if deep_supervision:
             raise ValueError('GRU-D Network does not implement deep supervision.')
         if header is None:
