@@ -6,6 +6,9 @@ dependencies:
   - cudnn=7.6
   - python=3.6
   - cudatoolkit=10.0
+  - tensorflow-gpu=1.15.0
+  - keras = 2.1.2
   - scikit-learn
   - pandas
+  - tqdm
 prefix: /home/mingzhul/projects/Simultaneous-EHR/repos/mimic-iv-benchmarks/.conda/mimic4bench-gpu

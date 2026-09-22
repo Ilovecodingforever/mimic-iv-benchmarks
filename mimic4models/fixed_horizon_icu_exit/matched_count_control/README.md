@@ -186,7 +186,7 @@ python -m mimic4models.fixed_horizon_icu_exit.main \
   --dropout 0.3 \
   --batch_size 8 \
   --epochs 100 \
-  --seed 0 \
+  --seed 1 \
   --sampling_strategy none \
   --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay \
   --normalizer_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers 
