@@ -1,4 +1,4 @@
-name: /home/mingzhul/projects/Simultaneous-EHR/repos/mimic-iv-benchmarks/.conda/mimic4bench-gpu
+# name: /home/mingzhul/projects/Simultaneous-EHR/repos/mimic-iv-benchmarks/.conda/mimic4bench-gpu
 channels:
   - defaults
 dependencies:
@@ -6,4 +6,6 @@ dependencies:
   - cudnn=7.6
   - python=3.6
   - cudatoolkit=10.0
+  - scikit-learn
+  - pandas
 prefix: /home/mingzhul/projects/Simultaneous-EHR/repos/mimic-iv-benchmarks/.conda/mimic4bench-gpu
