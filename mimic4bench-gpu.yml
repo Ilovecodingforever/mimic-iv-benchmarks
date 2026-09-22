@@ -1,14 +1,23 @@
-# name: /home/mingzhul/projects/Simultaneous-EHR/repos/mimic-iv-benchmarks/.conda/mimic4bench-gpu
+# GPU environment for the old Keras/TensorFlow benchmark stack.
+# Keep TensorFlow/Keras in pip: solving these old versions from conda/defaults
+# conflicts or hangs on modern conda metadata, while this pip/conda split matches
+# the working local .conda/mimic4bench-gpu environment.
+name: mimic4bench-gpu
 channels:
+  - conda-forge
   - defaults
 dependencies:
-  - pip
-  - tensorflow-gpu=1.15.0
-  - keras=2.1.2
-  - cudnn=7.6
-  - cudatoolkit=10.0
   - python=3.6
-  - scikit-learn
-  - pandas
-  - tqdm
-prefix: .conda/mimic4bench-gpu
+  - pip
+  - cudatoolkit=10.0
+  - cudnn=7.6
+  - pip:
+      - tensorflow-gpu==1.15.0
+      - Keras==2.1.2
+      - numpy==1.19.5
+      - pandas==1.1.5
+      - scikit-learn==0.24.2
+      - scipy==1.5.4
+      - h5py==3.1.0
+      - protobuf==3.19.6
+      - tqdm==4.64.1
