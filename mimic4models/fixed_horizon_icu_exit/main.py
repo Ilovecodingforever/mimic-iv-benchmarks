@@ -187,6 +187,12 @@ def raw_bucket_size(batch_size):
     return max(int(batch_size) * 100, int(batch_size))
 
 
+def _flat_model_predictions(outputs):
+    if isinstance(outputs, list):
+        outputs = outputs[0]
+    return np.array(outputs).flatten()
+
+
 def predict_raw_batches(model, sequences, labels, batch_size):
     data_seq = RawBatchSequence(sequences, labels, batch_size=batch_size, shuffle=False,
                                 bucket_size=raw_bucket_size(batch_size), target_repl=False)
@@ -194,8 +200,47 @@ def predict_raw_batches(model, sequences, labels, batch_size):
     for batch_i in range(len(data_seq)):
         x_batch, _ = data_seq[batch_i]
         batch_pred = model.predict(x_batch, batch_size=batch_size, verbose=0)
-        predictions[data_seq.batch_indices(batch_i)] = np.array(batch_pred).flatten()
+        predictions[data_seq.batch_indices(batch_i)] = _flat_model_predictions(batch_pred)
     return predictions
+
+
+def check_raw_padding_prediction_equivalence(model, sequences, labels, batch_size, max_examples=32,
+                                             atol=1e-6, rtol=1e-5):
+    if len(sequences) == 0:
+        return np.nan
+    lengths = np.asarray([x.shape[0] for x in sequences], dtype=int)
+    n_check = min(int(max_examples), len(sequences))
+    sorted_indices = np.argsort(lengths)
+    if n_check == len(sequences):
+        check_indices = sorted_indices
+    else:
+        positions = np.linspace(0, len(sorted_indices) - 1, n_check).astype(int)
+        check_indices = sorted_indices[positions]
+    check_sequences = [sequences[i] for i in check_indices]
+    check_labels = np.asarray(labels)[check_indices]
+
+    global_x = common_utils.pad_zeros(check_sequences)
+    if global_x.dtype != np.float32:
+        global_x = global_x.astype(np.float32)
+    for row_i, seq in enumerate(check_sequences):
+        if seq.shape[0] < global_x.shape[1]:
+            padding = global_x[row_i, seq.shape[0]:]
+            if not np.all(padding == 0.0):
+                raise AssertionError('Global padding contains non-zero rows')
+    pred_global = _flat_model_predictions(model.predict(global_x, batch_size=batch_size, verbose=0))
+    pred_local = predict_raw_batches(model, check_sequences, check_labels, batch_size)
+
+    if pred_global.shape[0] != len(check_sequences) or pred_local.shape[0] != len(check_sequences):
+        raise AssertionError('Raw padding check prediction count mismatch')
+    if check_labels.shape[0] != len(check_sequences):
+        raise AssertionError('Raw padding check label count mismatch')
+    max_abs_diff = float(np.max(np.abs(pred_global - pred_local))) if len(check_sequences) else 0.0
+    if not np.allclose(pred_global, pred_local, atol=atol, rtol=rtol):
+        raise AssertionError(
+            'Global-vs-batch-local raw padding predictions differ; max_abs_diff={}'.format(max_abs_diff))
+    print('Raw padding equivalence check: n={} max_abs_diff={:.8g}'.format(
+        len(check_sequences), max_abs_diff))
+    return max_abs_diff
 
 
 def main():
@@ -371,6 +416,9 @@ def main():
                 val_raw[0], val_raw[1], batch_size=args.batch_size,
                 shuffle=False, bucket_size=raw_bucket_size(args.batch_size),
                 target_repl=target_repl)
+            train_sequence.print_diagnostics()
+            check_raw_padding_prediction_equivalence(
+                model, train_raw[0], train_raw[1], batch_size=args.batch_size)
         elif target_repl:
             T = train_raw[0][0].shape[0]
 
@@ -393,7 +441,8 @@ def main():
                                                                   val_data=val_sequence or val_raw,
                                                                   target_repl=(args.target_repl_coef > 0),
                                                                   batch_size=args.batch_size,
-                                                                  verbose=args.verbose)
+                                                                  verbose=args.verbose,
+                                                                  skip_train_metrics=raw_mode)
         dirname = os.path.dirname(path)
         if not os.path.exists(dirname):
             os.makedirs(dirname)

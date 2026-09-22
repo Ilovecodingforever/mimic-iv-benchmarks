@@ -143,7 +143,8 @@ class DecompensationMetrics(keras.callbacks.Callback):
 
 
 class InHospitalMortalityMetrics(keras.callbacks.Callback):
-    def __init__(self, train_data, val_data, target_repl, batch_size=32, early_stopping=True, verbose=2):
+    def __init__(self, train_data, val_data, target_repl, batch_size=32, early_stopping=True,
+                 verbose=2, skip_train_metrics=False):
         super(InHospitalMortalityMetrics, self).__init__()
         self.train_data = train_data
         self.val_data = val_data
@@ -151,6 +152,7 @@ class InHospitalMortalityMetrics(keras.callbacks.Callback):
         self.batch_size = batch_size
         self.early_stopping = early_stopping
         self.verbose = verbose
+        self.skip_train_metrics = skip_train_metrics
         self.train_history = []
         self.val_history = []
 
@@ -197,8 +199,13 @@ class InHospitalMortalityMetrics(keras.callbacks.Callback):
         history.append(ret)
 
     def on_epoch_end(self, epoch, logs={}):
-        print("\n==>predicting on train")
-        self.calc_metrics(self.train_data, self.train_history, 'train', logs)
+        if self.skip_train_metrics:
+            print("\n==>skipping full train prediction metrics")
+            logs['train_auroc'] = np.nan
+            logs['train_auprc'] = np.nan
+        else:
+            print("\n==>predicting on train")
+            self.calc_metrics(self.train_data, self.train_history, 'train', logs)
         print("\n==>predicting on validation")
         self.calc_metrics(self.val_data, self.val_history, 'val', logs)
 

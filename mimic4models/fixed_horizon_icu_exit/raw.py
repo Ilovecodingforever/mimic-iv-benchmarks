@@ -93,7 +93,7 @@ class RawSequenceEncoder(object):
             if end is not None and float(row[0]) > end + DISCRETIZER_EPS:
                 continue
             rows.append(row)
-        data = np.zeros((len(rows), self._feature_dim), dtype=float)
+        data = np.zeros((len(rows), self._feature_dim), dtype=np.float32)
         for row_id, row in enumerate(rows):
             for col_id in range(1, len(row)):
                 value = row[col_id]
@@ -170,7 +170,7 @@ class RawObservedNormalizer(object):
         self._counts = dct.get('counts')
 
     def transform(self, X):
-        ret = 1.0 * X
+        ret = np.asarray(X, dtype=np.float32).copy()
         for i, field in enumerate(self._fields):
             observed = ret[:, self._mask_fields[i]] > 0.5
             ret[observed, field] = (ret[observed, field] - self._means[i]) / self._stds[i]
@@ -265,17 +265,59 @@ class RawBatchSequence(object):
 
     def on_epoch_end(self):
         order = np.argsort(self.lengths)
+        batches = self._make_batches(order)
         if self.shuffle:
-            buckets = [order[i:i + self.bucket_size].copy()
-                       for i in range(0, len(order), self.bucket_size)]
-            for bucket in buckets:
-                self.rng.shuffle(bucket)
-            self.rng.shuffle(buckets)
-            order = np.concatenate(buckets)
-        self._batches = self._make_batches(order)
+            for batch in batches:
+                self.rng.shuffle(batch)
+            self.rng.shuffle(batches)
+        self._batches = batches
 
     def batch_indices(self, batch_index):
         return self._batches[batch_index]
+
+    def padding_efficiency(self):
+        real_steps = 0.0
+        allocated_steps = 0.0
+        batch_max_lengths = []
+        for indices in self._batches:
+            lengths = self.lengths[indices]
+            max_len = int(np.max(lengths))
+            real_steps += float(np.sum(lengths))
+            allocated_steps += float(len(indices) * max_len)
+            batch_max_lengths.append(max_len)
+        efficiency = real_steps / allocated_steps if allocated_steps else np.nan
+        return {'real_steps': real_steps,
+                'allocated_steps': allocated_steps,
+                'padding_efficiency': efficiency,
+                'padding_overhead': 1.0 - efficiency if not np.isnan(efficiency) else np.nan,
+                'mean_real_length': float(np.mean(self.lengths)),
+                'mean_batch_max_length': float(np.mean(batch_max_lengths))}
+
+    def print_diagnostics(self):
+        lengths = self.lengths.astype(float)
+        eff = self.padding_efficiency()
+        global_allocated_steps = float(len(self.sequences) * np.max(self.lengths))
+        global_efficiency = eff['real_steps'] / global_allocated_steps if global_allocated_steps else np.nan
+        global_overhead = 1.0 - global_efficiency if not np.isnan(global_efficiency) else np.nan
+        print('Raw batching:')
+        print('  n examples: {}'.format(len(self.sequences)))
+        print('  batch size: {}'.format(self.batch_size))
+        print('  min length: {}'.format(int(np.min(lengths))))
+        print('  median length: {:.1f}'.format(float(np.percentile(lengths, 50))))
+        print('  p90 length: {:.1f}'.format(float(np.percentile(lengths, 90))))
+        print('  p95 length: {:.1f}'.format(float(np.percentile(lengths, 95))))
+        print('  p99 length: {:.1f}'.format(float(np.percentile(lengths, 99))))
+        print('  max length: {}'.format(int(np.max(lengths))))
+        print('  mean real sequence length: {:.1f}'.format(eff['mean_real_length']))
+        print('  mean batch max length: {:.1f}'.format(eff['mean_batch_max_length']))
+        print('  global padding efficiency: {:.1%}'.format(global_efficiency))
+        print('  global padding overhead: {:.1%}'.format(global_overhead))
+        print('  batch-local padding efficiency: {:.1%}'.format(eff['padding_efficiency']))
+        print('  batch-local padding overhead: {:.1%}'.format(eff['padding_overhead']))
+        eff['global_padding_efficiency'] = global_efficiency
+        eff['global_padding_overhead'] = global_overhead
+        return eff
+
 
     def __getitem__(self, batch_index):
         indices = self.batch_indices(batch_index)
