@@ -183,6 +183,16 @@ def load_test_raw(test_reader, representation, normalizer, small_part, raw_mode=
                            return_names=True)
 
 
+def maybe_prepare_model_input(model_module, X, header, timestep):
+    if hasattr(model_module, 'prepare_input'):
+        return model_module.prepare_input(X, header=header, timestep=timestep)
+    return X
+
+
+def maybe_prepare_model_data(model_module, data, header, timestep):
+    return (maybe_prepare_model_input(model_module, data[0], header, timestep), data[1])
+
+
 def raw_bucket_size(batch_size):
     return max(int(batch_size) * 100, int(batch_size))
 
@@ -404,6 +414,9 @@ def main():
         train_raw, val_raw = load_train_val_raw(train_reader, val_reader,
                                                 representation, normalizer, args.small_part,
                                                 raw_mode=raw_mode)
+        if not raw_mode:
+            train_raw = maybe_prepare_model_data(model_module, train_raw, feature_header, args.timestep)
+            val_raw = maybe_prepare_model_data(model_module, val_raw, feature_header, args.timestep)
 
         train_sequence = None
         val_sequence = None
@@ -420,7 +433,10 @@ def main():
             check_raw_padding_prediction_equivalence(
                 model, train_raw[0], train_raw[1], batch_size=args.batch_size)
         elif target_repl:
-            T = train_raw[0][0].shape[0]
+            if isinstance(train_raw[0], list):
+                T = train_raw[0][0].shape[1]
+            else:
+                T = train_raw[0][0].shape[0]
 
             def extend_labels(data):
                 data = list(data)
@@ -489,6 +505,7 @@ def main():
         if raw_mode:
             predictions = predict_raw_batches(model, data, labels, args.batch_size)
         else:
+            data = maybe_prepare_model_input(model_module, data, feature_header, args.timestep)
             predictions = model.predict(data, batch_size=args.batch_size, verbose=1)
             predictions = np.array(predictions)[:, 0]
         metrics.print_metrics_binary(labels, predictions)

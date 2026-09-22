@@ -177,13 +177,21 @@ class InHospitalMortalityMetrics(keras.callbacks.Callback):
                     predictions += list(np.array(outputs).flatten())
                 y_true += list(np.array(y).flatten())
         else:
-            for i in range(0, len(data[0]), B):
+            x_data = data[0]
+            n_examples = len(x_data[0]) if isinstance(x_data, list) else len(x_data)
+
+            def batch_slice(x, start, stop):
+                if isinstance(x, list):
+                    return [item[start:stop] for item in x]
+                return x[start:stop]
+
+            for i in range(0, n_examples, B):
                 if self.verbose == 1:
-                    print("\tdone {}/{}".format(i, len(data[0])), end='\r')
+                    print("\tdone {}/{}".format(i, n_examples), end='\r')
                 if self.target_repl:
-                    (x, y, y_repl) = (data[0][i:i + B], data[1][0][i:i + B], data[1][1][i:i + B])
+                    (x, y, y_repl) = (batch_slice(x_data, i, i + B), data[1][0][i:i + B], data[1][1][i:i + B])
                 else:
-                    (x, y) = (data[0][i:i + B], data[1][i:i + B])
+                    (x, y) = (batch_slice(x_data, i, i + B), data[1][i:i + B])
                 outputs = self.model.predict(x, batch_size=B)
                 if self.target_repl:
                     predictions += list(np.array(outputs[0]).flatten())
