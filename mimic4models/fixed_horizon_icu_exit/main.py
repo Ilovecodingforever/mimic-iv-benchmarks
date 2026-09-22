@@ -14,8 +14,8 @@ from mimic4models import metrics
 from mimic4models.in_hospital_mortality import utils
 from mimic4models.preprocessing import Discretizer, Normalizer
 from mimic4models.fixed_horizon_icu_exit.raw import (
-    RawObservedNormalizer, RawSequenceEncoder, is_raw_timestep, load_raw_data,
-    print_raw_sequence_length_stats)
+    RawBatchSequence, RawObservedNormalizer, RawSequenceEncoder, is_raw_timestep,
+    load_raw_data, load_raw_data_unpadded, print_raw_sequence_length_stats)
 from mimic4models.fixed_horizon_icu_exit.matched_count_control.sampling import (
     DEFAULT_SAMPLING_SEED, SamplingReader, validate_sampling_args)
 
@@ -167,8 +167,8 @@ def test_prediction_path(output_dir, load_state, train_sampling_strategy,
 
 def load_train_val_raw(train_reader, val_reader, representation, normalizer, small_part, raw_mode=False):
     if raw_mode:
-        train_raw = load_raw_data(train_reader, representation, normalizer, small_part)
-        val_raw = load_raw_data(val_reader, representation, normalizer, small_part)
+        train_raw = load_raw_data_unpadded(train_reader, representation, normalizer, small_part)
+        val_raw = load_raw_data_unpadded(val_reader, representation, normalizer, small_part)
     else:
         train_raw = utils.load_data(train_reader, representation, normalizer, small_part)
         val_raw = utils.load_data(val_reader, representation, normalizer, small_part)
@@ -177,10 +177,25 @@ def load_train_val_raw(train_reader, val_reader, representation, normalizer, sma
 
 def load_test_raw(test_reader, representation, normalizer, small_part, raw_mode=False):
     if raw_mode:
-        return load_raw_data(test_reader, representation, normalizer, small_part,
-                             return_names=True)
+        return load_raw_data_unpadded(test_reader, representation, normalizer, small_part,
+                                      return_names=True)
     return utils.load_data(test_reader, representation, normalizer, small_part,
                            return_names=True)
+
+
+def raw_bucket_size(batch_size):
+    return max(int(batch_size) * 100, int(batch_size))
+
+
+def predict_raw_batches(model, sequences, labels, batch_size):
+    data_seq = RawBatchSequence(sequences, labels, batch_size=batch_size, shuffle=False,
+                                bucket_size=raw_bucket_size(batch_size), target_repl=False)
+    predictions = np.zeros((len(sequences),), dtype=float)
+    for batch_i in range(len(data_seq)):
+        x_batch, _ = data_seq[batch_i]
+        batch_pred = model.predict(x_batch, batch_size=batch_size, verbose=0)
+        predictions[data_seq.batch_indices(batch_i)] = np.array(batch_pred).flatten()
+    return predictions
 
 
 def main():
@@ -345,7 +360,18 @@ def main():
                                                 representation, normalizer, args.small_part,
                                                 raw_mode=raw_mode)
 
-        if target_repl:
+        train_sequence = None
+        val_sequence = None
+        if raw_mode:
+            train_sequence = RawBatchSequence(
+                train_raw[0], train_raw[1], batch_size=args.batch_size,
+                shuffle=True, bucket_size=raw_bucket_size(args.batch_size),
+                seed=args.seed, target_repl=target_repl)
+            val_sequence = RawBatchSequence(
+                val_raw[0], val_raw[1], batch_size=args.batch_size,
+                shuffle=False, bucket_size=raw_bucket_size(args.batch_size),
+                target_repl=target_repl)
+        elif target_repl:
             T = train_raw[0][0].shape[0]
 
             def extend_labels(data):
@@ -363,8 +389,8 @@ def main():
             args.output_dir, model.final_name, args.load_state, args.mode)
         path = os.path.join(args.output_dir, 'keras_states/' + model.final_name + '.epoch{epoch}.test{val_loss}.state')
 
-        metrics_callback = keras_utils.InHospitalMortalityMetrics(train_data=train_raw,
-                                                                  val_data=val_raw,
+        metrics_callback = keras_utils.InHospitalMortalityMetrics(train_data=train_sequence or train_raw,
+                                                                  val_data=val_sequence or val_raw,
                                                                   target_repl=(args.target_repl_coef > 0),
                                                                   batch_size=args.batch_size,
                                                                   verbose=args.verbose)
@@ -380,15 +406,25 @@ def main():
                                append=csv_append, separator=';')
 
         print("==> training")
-        model.fit(x=train_raw[0],
-                  y=train_raw[1],
-                  validation_data=val_raw,
-                  epochs=n_trained_chunks + args.epochs,
-                  initial_epoch=n_trained_chunks,
-                  callbacks=[metrics_callback, saver, csv_logger],
-                  shuffle=True,
-                  verbose=args.verbose,
-                  batch_size=args.batch_size)
+        if raw_mode:
+            model.fit_generator(generator=train_sequence.iter_batches(),
+                                steps_per_epoch=len(train_sequence),
+                                validation_data=val_sequence.iter_batches(),
+                                validation_steps=len(val_sequence),
+                                epochs=n_trained_chunks + args.epochs,
+                                initial_epoch=n_trained_chunks,
+                                callbacks=[metrics_callback, saver, csv_logger],
+                                verbose=args.verbose)
+        else:
+            model.fit(x=train_raw[0],
+                      y=train_raw[1],
+                      validation_data=val_raw,
+                      epochs=n_trained_chunks + args.epochs,
+                      initial_epoch=n_trained_chunks,
+                      callbacks=[metrics_callback, saver, csv_logger],
+                      shuffle=True,
+                      verbose=args.verbose,
+                      batch_size=args.batch_size)
 
     elif args.mode == 'test':
         test_reader = build_reader(args.data, 'test', args.horizon)
@@ -401,8 +437,11 @@ def main():
         labels = ret["data"][1]
         names = ret["names"]
 
-        predictions = model.predict(data, batch_size=args.batch_size, verbose=1)
-        predictions = np.array(predictions)[:, 0]
+        if raw_mode:
+            predictions = predict_raw_batches(model, data, labels, args.batch_size)
+        else:
+            predictions = model.predict(data, batch_size=args.batch_size, verbose=1)
+            predictions = np.array(predictions)[:, 0]
         metrics.print_metrics_binary(labels, predictions)
 
         path = test_prediction_path(args.output_dir, args.load_state,

@@ -158,19 +158,36 @@ class InHospitalMortalityMetrics(keras.callbacks.Callback):
         y_true = []
         predictions = []
         B = self.batch_size
-        for i in range(0, len(data[0]), B):
-            if self.verbose == 1:
-                print("\tdone {}/{}".format(i, len(data[0])), end='\r')
-            if self.target_repl:
-                (x, y, y_repl) = (data[0][i:i + B], data[1][0][i:i + B], data[1][1][i:i + B])
-            else:
-                (x, y) = (data[0][i:i + B], data[1][i:i + B])
-            outputs = self.model.predict(x, batch_size=B)
-            if self.target_repl:
-                predictions += list(np.array(outputs[0]).flatten())
-            else:
-                predictions += list(np.array(outputs).flatten())
-            y_true += list(np.array(y).flatten())
+        if hasattr(data, 'iter_batches'):
+            for batch_i in range(len(data)):
+                if self.verbose == 1:
+                    print("\tdone {}/{}".format(batch_i, len(data)), end='\r')
+                batch = data[batch_i]
+                x = batch[0]
+                if self.target_repl:
+                    y = batch[1][0]
+                else:
+                    y = batch[1]
+                outputs = self.model.predict(x, batch_size=B)
+                if self.target_repl:
+                    predictions += list(np.array(outputs[0]).flatten())
+                else:
+                    predictions += list(np.array(outputs).flatten())
+                y_true += list(np.array(y).flatten())
+        else:
+            for i in range(0, len(data[0]), B):
+                if self.verbose == 1:
+                    print("\tdone {}/{}".format(i, len(data[0])), end='\r')
+                if self.target_repl:
+                    (x, y, y_repl) = (data[0][i:i + B], data[1][0][i:i + B], data[1][1][i:i + B])
+                else:
+                    (x, y) = (data[0][i:i + B], data[1][i:i + B])
+                outputs = self.model.predict(x, batch_size=B)
+                if self.target_repl:
+                    predictions += list(np.array(outputs[0]).flatten())
+                else:
+                    predictions += list(np.array(outputs).flatten())
+                y_true += list(np.array(y).flatten())
         print('\n')
         predictions = np.array(predictions)
         predictions = np.stack([1 - predictions, predictions], axis=1)

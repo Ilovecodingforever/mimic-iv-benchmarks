@@ -182,7 +182,7 @@ def is_raw_timestep(timestep):
     return abs(float(timestep)) <= DISCRETIZER_EPS
 
 
-def load_raw_data(reader, encoder, normalizer, small_part=False, return_names=False):
+def _load_raw_examples(reader, encoder, normalizer, small_part=False):
     n_examples = reader.get_number_of_examples()
     if small_part:
         n_examples = min(n_examples, 1000)
@@ -192,11 +192,106 @@ def load_raw_data(reader, encoder, normalizer, small_part=False, return_names=Fa
             for (X, t) in zip(ret['X'], ret['t'])]
     if normalizer is not None:
         data = [normalizer.transform(X) for X in data]
+    return ret, data
+
+
+def load_raw_data_unpadded(reader, encoder, normalizer, small_part=False, return_names=False):
+    ret, data = _load_raw_examples(reader, encoder, normalizer, small_part)
+    whole_data = (data, np.array(ret['y']))
+    if not return_names:
+        return whole_data
+    return {'data': whole_data, 'names': ret['name']}
+
+
+def load_raw_data(reader, encoder, normalizer, small_part=False, return_names=False):
+    ret, data = _load_raw_examples(reader, encoder, normalizer, small_part)
     data = common_utils.pad_zeros(data)
     whole_data = (data, np.array(ret['y']))
     if not return_names:
         return whole_data
     return {'data': whole_data, 'names': ret['name']}
+
+
+def pad_raw_batch(sequences, dtype=np.float32):
+    if len(sequences) == 0:
+        raise ValueError('Cannot pad an empty raw batch.')
+    if dtype is None:
+        dtype = sequences[0].dtype
+    feature_shape = sequences[0].shape[1:]
+    max_len = max(x.shape[0] for x in sequences)
+    batch = np.zeros((len(sequences), max_len) + feature_shape, dtype=dtype)
+    for i, seq in enumerate(sequences):
+        if seq.shape[1:] != feature_shape:
+            raise ValueError('Raw batch feature shapes differ: {} vs {}'.format(
+                seq.shape[1:], feature_shape))
+        batch[i, :seq.shape[0]] = seq.astype(dtype, copy=False)
+    return batch
+
+
+class RawBatchSequence(object):
+    def __init__(self, sequences, labels, batch_size, shuffle=True, bucket_size=None,
+                 seed=None, target_repl=False, dtype=np.float32):
+        if len(sequences) != len(labels):
+            raise ValueError('sequences and labels must have the same length')
+        if len(sequences) == 0:
+            raise ValueError('RawBatchSequence requires at least one example')
+        self.sequences = list(sequences)
+        self.labels = np.asarray(labels)
+        self.batch_size = int(batch_size)
+        if self.batch_size <= 0:
+            raise ValueError('batch_size must be positive')
+        self.shuffle = bool(shuffle)
+        self.bucket_size = int(bucket_size or max(self.batch_size * 100, self.batch_size))
+        self.bucket_size = max(self.bucket_size, self.batch_size)
+        self.target_repl = bool(target_repl)
+        self.dtype = dtype
+        self.rng = np.random.RandomState(seed)
+        self.lengths = np.asarray([x.shape[0] for x in self.sequences], dtype=int)
+        if np.any(self.lengths <= 0):
+            raise ValueError('Raw sequences must contain at least one observed row')
+        feature_shape = self.sequences[0].shape[1:]
+        for seq in self.sequences:
+            if seq.ndim != 2 or seq.shape[1:] != feature_shape:
+                raise ValueError('All raw sequences must have shape (T, feature_dim)')
+        self._batches = []
+        self.on_epoch_end()
+
+    def __len__(self):
+        return int(np.ceil(float(len(self.sequences)) / float(self.batch_size)))
+
+    def _make_batches(self, ordered):
+        return [ordered[i:i + self.batch_size]
+                for i in range(0, len(ordered), self.batch_size)]
+
+    def on_epoch_end(self):
+        order = np.argsort(self.lengths)
+        if self.shuffle:
+            buckets = [order[i:i + self.bucket_size].copy()
+                       for i in range(0, len(order), self.bucket_size)]
+            for bucket in buckets:
+                self.rng.shuffle(bucket)
+            self.rng.shuffle(buckets)
+            order = np.concatenate(buckets)
+        self._batches = self._make_batches(order)
+
+    def batch_indices(self, batch_index):
+        return self._batches[batch_index]
+
+    def __getitem__(self, batch_index):
+        indices = self.batch_indices(batch_index)
+        x_batch = pad_raw_batch([self.sequences[i] for i in indices], dtype=self.dtype)
+        y_batch = self.labels[indices]
+        if not self.target_repl:
+            return x_batch, y_batch
+        y_repl = np.expand_dims(y_batch, axis=-1).repeat(x_batch.shape[1], axis=1)
+        y_repl = np.expand_dims(y_repl, axis=-1)
+        return x_batch, [y_batch, y_repl]
+
+    def iter_batches(self):
+        while True:
+            for i in range(len(self)):
+                yield self[i]
+            self.on_epoch_end()
 
 
 def raw_sequence_length_stats(reader, encoder, small_part=False):
