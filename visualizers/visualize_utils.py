@@ -54,7 +54,11 @@ def validate_epoch_set(df, expected_epochs=DEFAULT_EXPECTED_EPOCHS):
 
 
 def read_validation_log(log_path, only_complete=False, expected_epochs=DEFAULT_EXPECTED_EPOCHS):
-    df = pd.read_csv(str(log_path), sep=";")
+    try:
+        df = pd.read_csv(str(log_path), sep=";")
+    except pd.errors.EmptyDataError:
+        return None
+
     if len(df) == 0:
         return None
     complete = validate_epoch_set(df, expected_epochs=expected_epochs)

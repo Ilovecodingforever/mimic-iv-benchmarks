@@ -123,7 +123,8 @@ python -m mimic4models.create_normalizer_state \
   --sampling_interval 4 \
   --sampling_seed 100 \
   --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers \
-  --sampling_strategy random_matched 
+  --sampling_strategy random_matched \
+  --seed 0
 ```
 
 ```bash
@@ -137,7 +138,8 @@ python -m mimic4models.create_normalizer_state \
   --store_masks \
   --sampling_interval 4 \
   --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers \
-  --sampling_strategy structured 
+  --sampling_strategy structured \
+  --seed 0
 ```
 
 ## raw data with LSTM (not discretized)
@@ -155,7 +157,8 @@ python -m mimic4models.fixed_horizon_icu_exit.main \
   --epochs 100 \
   --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay \
   --normalizer_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers \
-  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/fixed_horizon_icu_exit/12h
+  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/fixed_horizon_icu_exit/12h \
+  --seed 0
 
 python -m mimic4models.fixed_horizon_icu_exit.main \
   --network mimic4models/keras_models/raw_lstm.py \
@@ -176,8 +179,24 @@ python -m mimic4models.fixed_horizon_icu_exit.main \
 
 
 
+python -m mimic4models.fixed_horizon_icu_exit.main \
+  --network mimic4models/keras_models/raw_lstm.py \
+  --mode train \
+  --timestep 0 \
+  --horizon 12 \
+  --sampling_strategy none \
+  --dim 16 \
+  --depth 2 \
+  --dropout 0.3 \
+  --batch_size 8 \
+  --epochs 100 \
+  --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay \
+  --normalizer_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers \
+  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/fixed_horizon_icu_exit/12h \
+  --seed 4
 
-hasn't run:
+
+
 
 for seed in 3 4; do
 python -m mimic4models.fixed_horizon_icu_exit.main \
@@ -197,6 +216,35 @@ python -m mimic4models.fixed_horizon_icu_exit.main \
   --normalizer_state /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers/fixed_horizon_icu_exit_ts:1.00_impute:previous_start:zero_masks:True_n:21860.normalizer \
   --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/fixed_horizon_icu_exit/structured_r4_dense_norm_control/12h
 done
+
+
+Exp2B/C:
+running: h24 B seeds 0-4
+not run: 
+h24 C seeds 0-4
+h48 B seeds 0-4
+h48 C seeds 0-4
+h96 C seeds 0-4
+h168 B seeds 0-4
+
+
+for seed in 0 1 2 3 4; do
+python -m mimic4models.fixed_horizon_icu_exit.main \
+  --network mimic4models/keras_models/lstm.py \
+  --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay \
+  --dim 16 \
+  --depth 2 \
+  --dropout 0.3 \
+  --batch_size 8 \
+  --horizon 24 \
+  --timestep 1.0 \
+  --sampling_interval 4 \
+  --normalizer_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers \
+  --sampling_strategy structured \
+  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/fixed_horizon_icu_exit/structured/24h/4h \
+  --seed "$seed"
+done
+
 
 
 The filename encodes task, sampling strategy, interval, random sampling seed where relevant, downstream timestep, imputation, mask setting, and training example count.
