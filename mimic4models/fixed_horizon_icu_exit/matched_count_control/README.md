@@ -228,7 +228,7 @@ h96 C seeds 0-4
 h168 B seeds 0-4
 
 TODO: are results in summary viusalization all using test or val?
-
+describe the dataset and models
 
 
 for seed in 0 1 2 3 4; do
