@@ -177,12 +177,9 @@ python -m mimic4models.fixed_horizon_icu_exit.main \
 
 
 
+hasn't run:
 
-
-for seed in 2 3 4; do python -m mimic4models.fixed_horizon_icu_exit.main   --network mimic4models/keras_models/grud.py   --horizon 96   --timestep 1.0   --dim 16   --depth 1   --dropout 0.3   --batch_size 8   --epochs 100   --seed "$seed"   --sampling_strategy none   --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay   --normalizer_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers   --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/fixed_horizon_icu_exit/96h; done
-
-
-for seed in 0 1 2 3 4; do
+for seed in 3 4; do
 python -m mimic4models.fixed_horizon_icu_exit.main \
   --network mimic4models/keras_models/grud.py \
   --mode train \
