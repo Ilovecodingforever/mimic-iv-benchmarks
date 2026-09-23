@@ -317,6 +317,12 @@ def main():
     import tensorflow as tf
     from keras.callbacks import CSVLogger, ModelCheckpoint
     from mimic4models import keras_utils
+    from keras import backend as K
+
+    config = tf.ConfigProto()
+    config.gpu_options.allow_growth = True
+    sess = tf.Session(config=config)
+    K.set_session(sess)
 
     random.seed(args.seed)
     np.random.seed(args.seed)

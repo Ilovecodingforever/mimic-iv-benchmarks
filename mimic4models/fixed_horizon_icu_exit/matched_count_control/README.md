@@ -179,19 +179,39 @@ python -m mimic4models.fixed_horizon_icu_exit.main \
 
 python -m mimic4models.fixed_horizon_icu_exit.main \
   --network mimic4models/keras_models/grud.py \
-  --horizon 12 \
+  --horizon 96 \
   --timestep 1.0 \
   --dim 16 \
   --depth 1 \
   --dropout 0.3 \
   --batch_size 8 \
   --epochs 100 \
-  --seed 1 \
+  --seed 4 \
   --sampling_strategy none \
   --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay \
-  --normalizer_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers 
-  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/fixed_horizon_icu_exit/12h
+  --normalizer_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers \
+  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/fixed_horizon_icu_exit/96h
 
+
+
+for seed in 0 1 2 3 4; do
+python -m mimic4models.fixed_horizon_icu_exit.main \
+  --network mimic4models/keras_models/grud.py \
+  --mode train \
+  --timestep 1.0 \
+  --horizon 12 \
+  --sampling_strategy random_matched \
+  --sampling_interval 4 \
+  --dim 16 \
+  --depth 1 \
+  --dropout 0.3 \
+  --batch_size 8 \
+  --epochs 100 \
+  --seed "$seed" \
+  --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay \
+  --normalizer_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers \
+  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/fixed_horizon_icu_exit/random_matched/12h/4h
+done
 
 
 The filename encodes task, sampling strategy, interval, random sampling seed where relevant, downstream timestep, imputation, mask setting, and training example count.
