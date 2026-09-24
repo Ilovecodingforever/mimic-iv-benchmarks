@@ -223,8 +223,8 @@ running: h24 B seeds 0-4
 h48 B seeds 0-4
 h24 C seeds 0-4
 h48 C seeds 0-4
-not run: 
 h96 C seeds 0-4
+not run: 
 h168 B seeds 0-4
 
 TODO: are results in summary viusalization all using test or val?
