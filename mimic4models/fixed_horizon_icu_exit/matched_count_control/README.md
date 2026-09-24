@@ -220,10 +220,10 @@ done
 
 Exp2B/C:
 running: h24 B seeds 0-4
-not run: 
-h24 C seeds 0-4
 h48 B seeds 0-4
+h24 C seeds 0-4
 h48 C seeds 0-4
+not run: 
 h96 C seeds 0-4
 h168 B seeds 0-4
 
@@ -239,12 +239,30 @@ python -m mimic4models.fixed_horizon_icu_exit.main \
   --depth 2 \
   --dropout 0.3 \
   --batch_size 8 \
-  --horizon 24 \
+  --horizon 48 \
   --timestep 1.0 \
   --sampling_interval 4 \
   --normalizer_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers \
   --sampling_strategy structured \
-  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/fixed_horizon_icu_exit/structured/24h/4h \
+  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/fixed_horizon_icu_exit/structured/48h/4h \
+  --seed "$seed"
+done
+
+for seed in 0 1 2 3 4; do
+python -m mimic4models.fixed_horizon_icu_exit.main \
+  --network mimic4models/keras_models/lstm.py \
+  --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay \
+  --horizon 96 \
+  --dim 16 \
+  --depth 2 \
+  --dropout 0.3 \
+  --batch_size 8 \
+  --timestep 1.0 \
+  --sampling_interval 4 \
+  --sampling_seed 100 \
+  --normalizer_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers \
+  --sampling_strategy random_matched \
+  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/fixed_horizon_icu_exit/random_matched/96h/4h \
   --seed "$seed"
 done
 
