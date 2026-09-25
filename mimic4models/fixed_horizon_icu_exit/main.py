@@ -203,9 +203,10 @@ def _flat_model_predictions(outputs):
     return np.array(outputs).flatten()
 
 
-def predict_raw_batches(model, sequences, labels, batch_size):
+def predict_raw_batches(model, sequences, labels, batch_size, prepare_input=None):
     data_seq = RawBatchSequence(sequences, labels, batch_size=batch_size, shuffle=False,
-                                bucket_size=raw_bucket_size(batch_size), target_repl=False)
+                                bucket_size=raw_bucket_size(batch_size), target_repl=False,
+                                prepare_input=prepare_input)
     predictions = np.zeros((len(sequences),), dtype=float)
     for batch_i in range(len(data_seq)):
         x_batch, _ = data_seq[batch_i]
@@ -215,7 +216,7 @@ def predict_raw_batches(model, sequences, labels, batch_size):
 
 
 def check_raw_padding_prediction_equivalence(model, sequences, labels, batch_size, max_examples=32,
-                                             atol=1e-6, rtol=1e-5):
+                                             atol=1e-6, rtol=1e-5, prepare_input=None):
     if len(sequences) == 0:
         return np.nan
     lengths = np.asarray([x.shape[0] for x in sequences], dtype=int)
@@ -237,8 +238,10 @@ def check_raw_padding_prediction_equivalence(model, sequences, labels, batch_siz
             padding = global_x[row_i, seq.shape[0]:]
             if not np.all(padding == 0.0):
                 raise AssertionError('Global padding contains non-zero rows')
-    pred_global = _flat_model_predictions(model.predict(global_x, batch_size=batch_size, verbose=0))
-    pred_local = predict_raw_batches(model, check_sequences, check_labels, batch_size)
+    global_input = prepare_input(global_x) if prepare_input is not None else global_x
+    pred_global = _flat_model_predictions(model.predict(global_input, batch_size=batch_size, verbose=0))
+    pred_local = predict_raw_batches(model, check_sequences, check_labels, batch_size,
+                                     prepare_input=prepare_input)
 
     if pred_global.shape[0] != len(check_sequences) or pred_local.shape[0] != len(check_sequences):
         raise AssertionError('Raw padding check prediction count mismatch')
@@ -335,12 +338,16 @@ def main():
 
     target_repl = (args.target_repl_coef > 0.0 and args.mode == 'train')
 
+    print("==> using model {}".format(args.network))
+    model_module = imp.load_source(os.path.basename(args.network), args.network)
+    raw_uses_timestamps = raw_mode and bool(getattr(model_module, 'USES_RAW_TIMESTAMPS', False))
+
     train_reader = build_reader(args.data, 'train', args.horizon)
     train_reader = maybe_wrap_reader(train_reader, args.sampling_strategy,
                                      args.sampling_interval, args.sampling_seed)
 
     if raw_mode:
-        representation = RawSequenceEncoder()
+        representation = RawSequenceEncoder(include_timestamps=raw_uses_timestamps)
         feature_header = representation.header()
         normalizer = RawObservedNormalizer(representation.continuous_value_fields(),
                                            representation.continuous_mask_fields())
@@ -371,9 +378,8 @@ def main():
     args_dict['sampling_strategy'] = args.sampling_strategy
     args_dict['sampling_interval'] = args.sampling_interval
     args_dict['sampling_seed'] = args.sampling_seed
+    args_dict['raw_sequence_mask'] = raw_uses_timestamps
 
-    print("==> using model {}".format(args.network))
-    model_module = imp.load_source(os.path.basename(args.network), args.network)
     model = model_module.Network(**args_dict)
     sampling_suffix = ""
     if args.sampling_strategy != 'none':
@@ -420,6 +426,10 @@ def main():
         train_raw, val_raw = load_train_val_raw(train_reader, val_reader,
                                                 representation, normalizer, args.small_part,
                                                 raw_mode=raw_mode)
+        raw_prepare_input = None
+        if raw_mode and raw_uses_timestamps and hasattr(model_module, 'prepare_input'):
+            def raw_prepare_input(X):
+                return model_module.prepare_input(X, header=feature_header, timestep=args.timestep)
         if not raw_mode:
             train_raw = maybe_prepare_model_data(model_module, train_raw, feature_header, args.timestep)
             val_raw = maybe_prepare_model_data(model_module, val_raw, feature_header, args.timestep)
@@ -430,14 +440,15 @@ def main():
             train_sequence = RawBatchSequence(
                 train_raw[0], train_raw[1], batch_size=args.batch_size,
                 shuffle=True, bucket_size=raw_bucket_size(args.batch_size),
-                seed=args.seed, target_repl=target_repl)
+                seed=args.seed, target_repl=target_repl, prepare_input=raw_prepare_input)
             val_sequence = RawBatchSequence(
                 val_raw[0], val_raw[1], batch_size=args.batch_size,
                 shuffle=False, bucket_size=raw_bucket_size(args.batch_size),
-                target_repl=target_repl)
+                target_repl=target_repl, prepare_input=raw_prepare_input)
             train_sequence.print_diagnostics()
             check_raw_padding_prediction_equivalence(
-                model, train_raw[0], train_raw[1], batch_size=args.batch_size)
+                model, train_raw[0], train_raw[1], batch_size=args.batch_size,
+                prepare_input=raw_prepare_input)
         elif target_repl:
             if isinstance(train_raw[0], list):
                 T = train_raw[0][0].shape[1]
@@ -509,7 +520,12 @@ def main():
         names = ret["names"]
 
         if raw_mode:
-            predictions = predict_raw_batches(model, data, labels, args.batch_size)
+            raw_prepare_input = None
+            if raw_uses_timestamps and hasattr(model_module, 'prepare_input'):
+                def raw_prepare_input(X):
+                    return model_module.prepare_input(X, header=feature_header, timestep=args.timestep)
+            predictions = predict_raw_batches(model, data, labels, args.batch_size,
+                                              prepare_input=raw_prepare_input)
         else:
             data = maybe_prepare_model_input(model_module, data, feature_header, args.timestep)
             predictions = model.predict(data, batch_size=args.batch_size, verbose=1)

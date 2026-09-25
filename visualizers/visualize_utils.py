@@ -212,26 +212,47 @@ def _summarize_values(values, prefix):
     }
 
 
+def observed_mask_information(discretized, discretized_header):
+    names = discretized_header.split(",") if isinstance(discretized_header, str) else list(discretized_header)
+    mask_columns = [
+        (col_id, name[len("mask->"):])
+        for col_id, name in enumerate(names)
+        if name.startswith("mask->")
+    ]
+    if not mask_columns:
+        raise RuntimeError("No mask columns found in post-transform representation")
+    mask = discretized[:, [col_id for col_id, _ in mask_columns]]
+    channel_counts = {
+        channel: int(np.sum(discretized[:, col_id]))
+        for col_id, channel in mask_columns
+    }
+    return {
+        "token_count": int(np.sum(mask)),
+        "occupied_1h_bins": int(np.sum(np.sum(mask, axis=1) > 0)),
+        "channels_observed": int(sum(1 for value in channel_counts.values() if value > 0)),
+        "channel_counts": channel_counts,
+    }
+
+
 def characterize_reader_input_information(condition_readers, dense_condition="dense"):
-    """Characterize observed raw information before/after sampling.
+    """Characterize post-discretization observed information before/after sampling.
 
     condition_readers is a list of (condition, r, reader) tuples. The first
     column of each reader example must be Hours, and all readers must expose the
-    same stays in the same order.
+    same stays in the same order. Retained fractions use dense raw-event masks
+    as the denominator, so fixed-grid dense is not mechanically 1.0.
     """
-    from mimic4models.fixed_horizon_icu_exit.matched_count_control.sampling import (
-        cell_counts_by_channel,
-        nonempty_cell_count,
-        select_last_raw_observation_per_bin,
-    )
+    from mimic4models.fixed_horizon_icu_exit.raw import RawSequenceEncoder
     from mimic4models.preprocessing import Discretizer
 
     discretizer = Discretizer(timestep=1.0, store_masks=True,
                               impute_strategy="previous", start_time="zero")
+    raw_encoder = RawSequenceEncoder()
     stay_level_parts = []
     channel_rows = []
     expected_names = None
-    dense_tokens_by_name = None
+    raw_tokens_by_name = None
+    raw_channel_totals_reference = None
     total_channels = None
 
     for condition, r, reader in condition_readers:
@@ -252,19 +273,21 @@ def characterize_reader_input_information(condition_readers, dense_condition="de
                     example["name"], condition))
             names.append(example["name"])
             total_channels = len(example["header"]) - 1
-            token_count = int(nonempty_cell_count(X))
-            occupied_bins = len(set(
-                cell["bin_id"]
-                for cell in select_last_raw_observation_per_bin(
-                    X, example["header"], timestep=1.0, end=float(example["t"])).values()
-            ))
-            channel_counts = cell_counts_by_channel(X, example["header"])
-            channels_observed = int(sum(1 for value in channel_counts.values() if value > 0))
+            raw_encoded, raw_encoded_header = raw_encoder.transform(
+                X, header=example["header"], end=float(example["t"]))
+            raw_info = observed_mask_information(raw_encoded, raw_encoded_header)
+            raw_token_count = raw_info["token_count"]
+            discretized, discretized_header = discretizer.transform(
+                X, header=example["header"], end=float(example["t"]))
+            post_info = observed_mask_information(discretized, discretized_header)
+            token_count = post_info["token_count"]
+            occupied_bins = post_info["occupied_1h_bins"]
+            channel_counts = post_info["channel_counts"]
+            channels_observed = post_info["channels_observed"]
             if channel_totals is None:
-                channel_totals = dict((channel, 0) for channel in example["header"][1:])
+                channel_totals = dict((channel, 0) for channel in channel_counts)
             for channel, value in channel_counts.items():
                 channel_totals[channel] += int(value)
-            discretized, _ = discretizer.transform(X, header=example["header"], end=float(example["t"]))
             post_len = int(discretized.shape[0])
             if occupied_bins > 24:
                 raise RuntimeError("Occupied 1h bins > 24 for stay {} under {}".format(
@@ -278,6 +301,7 @@ def characterize_reader_input_information(condition_readers, dense_condition="de
                 "index": int(index),
                 "stay_name": example["name"],
                 "token_count": token_count,
+                "raw_token_count": raw_token_count,
                 "occupied_1h_bins": int(occupied_bins),
                 "channels_observed": channels_observed,
                 "post_discretization_sequence_length": post_len,
@@ -290,18 +314,27 @@ def characterize_reader_input_information(condition_readers, dense_condition="de
 
         part = pd.DataFrame(rows)
         if condition == dense_condition:
-            dense_tokens_by_name = dict(zip(part["stay_name"], part["token_count"]))
-            part["token_retained_fraction"] = 1.0
+            raw_tokens_by_name = dict(zip(part["stay_name"], part["raw_token_count"]))
+            raw_channel_totals_reference = {}
+            for index in range(reader.get_number_of_examples()):
+                example = reader.read_example(index)
+                X = _input_window_array(example)
+                raw_encoded, raw_encoded_header = raw_encoder.transform(
+                    X, header=example["header"], end=float(example["t"]))
+                raw_counts = observed_mask_information(raw_encoded, raw_encoded_header)["channel_counts"]
+                for channel, value in raw_counts.items():
+                    raw_channel_totals_reference[channel] = raw_channel_totals_reference.get(channel, 0) + int(value)
         else:
-            if dense_tokens_by_name is None:
-                raise RuntimeError("Dense condition must be characterized before {}".format(condition))
-            dense_values = np.asarray([dense_tokens_by_name[x] for x in part["stay_name"]], dtype=float)
-            part["token_retained_fraction"] = part["token_count"].astype(float).values / dense_values
-            if (part["token_count"].values > dense_values).any():
-                raise RuntimeError("{} has token_count > dense for at least one stay".format(condition))
-            if ((part["token_retained_fraction"] < -1e-12) |
-                    (part["token_retained_fraction"] > 1.0 + 1e-12)).any():
-                raise RuntimeError("{} token retained fraction outside [0, 1]".format(condition))
+            if raw_tokens_by_name is None:
+                raise RuntimeError("Dense raw reference must be characterized before {}".format(condition))
+        raw_values = np.asarray([raw_tokens_by_name[x] for x in part["stay_name"]], dtype=float)
+        part["raw_token_count"] = raw_values
+        part["token_retained_fraction"] = part["token_count"].astype(float).values / raw_values
+        if (part["token_count"].values > raw_values).any():
+            raise RuntimeError("{} has token_count > dense raw for at least one stay".format(condition))
+        if ((part["token_retained_fraction"] < -1e-12) |
+                (part["token_retained_fraction"] > 1.0 + 1e-12)).any():
+            raise RuntimeError("{} token retained fraction outside [0, 1]".format(condition))
         stay_level_parts.append(part)
 
         if channel_totals is not None:
@@ -323,6 +356,8 @@ def characterize_reader_input_information(condition_readers, dense_condition="de
             "n_stays": int(len(group)),
         }
         row.update(_summarize_values(group["token_count"].values, "token_count"))
+        if "raw_token_count" in group.columns:
+            row.update(_summarize_values(group["raw_token_count"].values, "raw_token_count"))
         row.update({
             "mean_token_retained_fraction": float(np.mean(group["token_retained_fraction"].values)),
             "median_token_retained_fraction": float(np.percentile(group["token_retained_fraction"].values, 50)),
@@ -341,25 +376,31 @@ def characterize_reader_input_information(condition_readers, dense_condition="de
 
     channel_summary = pd.DataFrame()
     channel_df = pd.DataFrame(channel_rows)
-    if len(channel_df) and dense_condition in set(channel_df["condition"]):
-        dense = channel_df[channel_df["condition"] == dense_condition][
-            ["channel", "mean_token_count"]].rename(
-                columns={"mean_token_count": "mean_dense_token_count"})
-        others = channel_df[channel_df["condition"] != dense_condition].copy()
-        if len(others):
-            first_condition = others["condition"].iloc[0]
-            other = others[others["condition"] == first_condition][
-                ["channel", "mean_token_count"]].rename(
-                    columns={"mean_token_count": "mean_r4_token_count"})
-            channel_summary = dense.merge(other, on="channel", how="inner")
-            channel_summary["r4_retained_fraction"] = (
-                channel_summary["mean_r4_token_count"] /
-                channel_summary["mean_dense_token_count"].replace(0, np.nan)
-            )
-            channel_summary = channel_summary.sort_values(
-                ["mean_dense_token_count", "r4_retained_fraction"],
-                ascending=[False, True],
-            ).reset_index(drop=True)
+    if len(channel_df) and raw_channel_totals_reference is not None:
+        n_reference_stays = float(len(stay_level[stay_level["condition"] == dense_condition]))
+        raw_reference = pd.DataFrame([
+            {"channel": channel, "mean_raw_token_count": float(total) / n_reference_stays}
+            for channel, total in raw_channel_totals_reference.items()
+        ])
+        channel_summary = channel_df.merge(raw_reference, on="channel", how="left")
+        channel_summary["mean_token_retained_fraction"] = (
+            channel_summary["mean_token_count"] /
+            channel_summary["mean_raw_token_count"].replace(0, np.nan)
+        )
+        condition_order = {
+            condition: order
+            for order, condition in enumerate(channel_df["condition"].drop_duplicates().tolist())
+        }
+        channel_summary["condition_order"] = channel_summary["condition"].map(condition_order)
+        channel_summary = channel_summary.sort_values(
+            ["condition_order", "channel"],
+            ascending=[True, True],
+        ).drop(["condition_order"], axis=1).reset_index(drop=True)
+        channel_summary = channel_summary[[
+            "condition", "r", "channel",
+            "mean_raw_token_count", "mean_token_count",
+            "mean_token_retained_fraction",
+        ]]
 
     return stay_level, summary, channel_summary
 

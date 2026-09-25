@@ -15,9 +15,12 @@ from mimic4models.preprocessing import DISCRETIZER_EPS
 class RawSequenceEncoder(object):
     """Encode original irregular rows as value features plus observation masks."""
 
-    def __init__(self, config_path=os.path.join(os.path.dirname(__file__), '..', 'resources', 'discretizer_config.json')):
+    def __init__(self, config_path=os.path.join(os.path.dirname(__file__), '..', 'resources', 'discretizer_config.json'),
+                 include_timestamps=False):
         with open(config_path) as f:
             config = json.load(f)
+        self._include_timestamps = bool(include_timestamps)
+        self._timestamp_name = 'Hours'
         self._id_to_channel = config['id_to_channel']
         self._channel_to_id = dict(zip(self._id_to_channel, range(len(self._id_to_channel))))
         self._is_categorical_channel = config['is_categorical_channel']
@@ -34,7 +37,8 @@ class RawSequenceEncoder(object):
             self._end_pos.append(cur_len)
         self._value_dim = cur_len
         self._mask_dim = len(self._id_to_channel)
-        self._feature_dim = self._value_dim + self._mask_dim
+        self._timestamp_pos = self._value_dim + self._mask_dim
+        self._feature_dim = self._timestamp_pos + (1 if self._include_timestamps else 0)
         self._header = self._make_header()
 
     @property
@@ -72,6 +76,8 @@ class RawSequenceEncoder(object):
                 names.append(channel)
         for channel in self._id_to_channel:
             names.append('mask->' + channel)
+        if self._include_timestamps:
+            names.append(self._timestamp_name)
         return names
 
     def _write_value(self, data, row_id, channel, value):
@@ -95,6 +101,8 @@ class RawSequenceEncoder(object):
             rows.append(row)
         data = np.zeros((len(rows), self._feature_dim), dtype=np.float32)
         for row_id, row in enumerate(rows):
+            if self._include_timestamps:
+                data[row_id, self._timestamp_pos] = float(row[0])
             for col_id in range(1, len(row)):
                 value = row[col_id]
                 if value == '':
@@ -230,7 +238,7 @@ def pad_raw_batch(sequences, dtype=np.float32):
 
 class RawBatchSequence(object):
     def __init__(self, sequences, labels, batch_size, shuffle=True, bucket_size=None,
-                 seed=None, target_repl=False, dtype=np.float32):
+                 seed=None, target_repl=False, dtype=np.float32, prepare_input=None):
         if len(sequences) != len(labels):
             raise ValueError('sequences and labels must have the same length')
         if len(sequences) == 0:
@@ -245,6 +253,7 @@ class RawBatchSequence(object):
         self.bucket_size = max(self.bucket_size, self.batch_size)
         self.target_repl = bool(target_repl)
         self.dtype = dtype
+        self.prepare_input = prepare_input
         self.rng = np.random.RandomState(seed)
         self.lengths = np.asarray([x.shape[0] for x in self.sequences], dtype=int)
         if np.any(self.lengths <= 0):
@@ -323,11 +332,13 @@ class RawBatchSequence(object):
         indices = self.batch_indices(batch_index)
         x_batch = pad_raw_batch([self.sequences[i] for i in indices], dtype=self.dtype)
         y_batch = self.labels[indices]
+        prepared_x_batch = self.prepare_input(x_batch) if self.prepare_input is not None else x_batch
         if not self.target_repl:
-            return x_batch, y_batch
-        y_repl = np.expand_dims(y_batch, axis=-1).repeat(x_batch.shape[1], axis=1)
+            return prepared_x_batch, y_batch
+        time_steps = prepared_x_batch[0].shape[1] if isinstance(prepared_x_batch, list) else x_batch.shape[1]
+        y_repl = np.expand_dims(y_batch, axis=-1).repeat(time_steps, axis=1)
         y_repl = np.expand_dims(y_repl, axis=-1)
-        return x_batch, [y_batch, y_repl]
+        return prepared_x_batch, [y_batch, y_repl]
 
     def iter_batches(self):
         while True:

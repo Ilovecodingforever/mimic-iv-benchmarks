@@ -3,11 +3,16 @@ from __future__ import print_function
 
 import numpy as np
 
+from keras import backend as K
 from keras.models import Model
-from keras.layers import Input, Dense, Dropout
+from keras.layers import Input, Dense, Dropout, Layer
 from keras.layers.wrappers import TimeDistributed
 from mimic4models.keras_utils import LastTimestep
 from mimic4models.keras_models.grud_layers import GRUD
+
+
+USES_RAW_TIMESTAMPS = True
+RAW_TIMESTAMP_FIELD = 'Hours'
 
 
 def _as_header_list(header):
@@ -32,7 +37,8 @@ def value_mask_mapping(header):
     existing one-hot categorical encoding instead of adding embeddings.
     """
     names = _as_header_list(header)
-    value_indices = [i for i, name in enumerate(names) if not name.startswith('mask->')]
+    value_indices = [i for i, name in enumerate(names)
+                     if not name.startswith('mask->') and name != RAW_TIMESTAMP_FIELD]
     mask_by_channel = dict((name[len('mask->'):], i)
                            for i, name in enumerate(names) if name.startswith('mask->'))
     if not mask_by_channel:
@@ -55,11 +61,12 @@ def timestamps_for_batch(n_examples, n_timesteps, timestep):
 
 
 def split_grud_inputs(X, header, timestep):
-    """Split normalized discretizer output into GRU-D values, masks, timestamps."""
+    """Split normalized model input into GRU-D values, masks, timestamps."""
     X = np.asarray(X)
     if X.ndim != 3:
         raise ValueError('GRU-D prepare_input expects a 3D tensor, got shape {}'.format(X.shape))
-    value_indices, mask_indices, _ = value_mask_mapping(header)
+    names = _as_header_list(header)
+    value_indices, mask_indices, _ = value_mask_mapping(names)
     values = X[:, :, value_indices].astype('float32')
     masks = X[:, :, mask_indices].astype('float32')
     if values.shape != masks.shape:
@@ -67,7 +74,11 @@ def split_grud_inputs(X, header, timestep):
             values.shape, masks.shape))
     if not np.all((masks == 0.0) | (masks == 1.0)):
         raise AssertionError('GRU-D expanded masks must remain binary after normalization.')
-    timestamps = timestamps_for_batch(X.shape[0], X.shape[1], timestep)
+    if RAW_TIMESTAMP_FIELD in names:
+        timestamp_i = names.index(RAW_TIMESTAMP_FIELD)
+        timestamps = X[:, :, timestamp_i:timestamp_i + 1].astype('float32')
+    else:
+        timestamps = timestamps_for_batch(X.shape[0], X.shape[1], timestep)
     return values, masks, timestamps
 
 
@@ -100,11 +111,28 @@ def elapsed_since_observed(timestamps, masks):
     return out
 
 
+class TimestepMaskFromObservations(Layer):
+    """Attach a timestep mask to values, using rows with any observation as real."""
+
+    def __init__(self, **kwargs):
+        self.supports_masking = True
+        super(TimestepMaskFromObservations, self).__init__(**kwargs)
+
+    def call(self, inputs, mask=None):
+        return inputs[0]
+
+    def compute_output_shape(self, input_shape):
+        return input_shape[0]
+
+    def compute_mask(self, inputs, input_mask=None):
+        return K.any(K.not_equal(inputs[1], 0.0), axis=-1)
+
+
 class Network(Model):
 
     def __init__(self, dim, batch_norm, dropout, rec_dropout, task,
                  target_repl=False, deep_supervision=False, num_classes=1,
-                 depth=1, input_dim=76, header=None, **kwargs):
+                 depth=1, input_dim=76, header=None, raw_sequence_mask=False, **kwargs):
 
         print('==> not used params in network class:', kwargs.keys())
         if depth != 1:
@@ -135,6 +163,7 @@ class Network(Model):
         M = Input(shape=(None, grud_input_dim), name='M')
         S = Input(shape=(None, 1), name='S')
         inputs = [X, M, S]
+        recurrent_X = TimestepMaskFromObservations()([X, M]) if raw_sequence_mask else X
 
         return_sequences = bool(target_repl)
         L = GRUD(units=dim,
@@ -144,7 +173,7 @@ class Network(Model):
                  x_imputation='zero',
                  input_decay='exp_relu',
                  hidden_decay='exp_relu',
-                 feed_masking=True)(inputs)
+                 feed_masking=True)([recurrent_X, M, S])
 
         if dropout > 0:
             L = Dropout(dropout)(L)

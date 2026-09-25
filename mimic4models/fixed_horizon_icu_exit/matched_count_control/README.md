@@ -196,75 +196,30 @@ python -m mimic4models.fixed_horizon_icu_exit.main \
   --seed 4
 
 
-
-
-for seed in 3 4; do
-python -m mimic4models.fixed_horizon_icu_exit.main \
+python -u -m mimic4models.fixed_horizon_icu_exit.main \
   --network mimic4models/keras_models/grud.py \
-  --mode train \
-  --horizon 12 \
-  --timestep 1.0 \
-  --sampling_strategy structured \
-  --sampling_interval 4 \
   --dim 16 \
   --depth 1 \
   --dropout 0.3 \
+  --mode train \
   --batch_size 8 \
+  --horizon 12 \
+  --timestep 0 \
+  --sampling_strategy none \
   --epochs 100 \
-  --seed "$seed" \
+  --seed 0 \
   --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay \
-  --normalizer_state /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers/fixed_horizon_icu_exit_ts:1.00_impute:previous_start:zero_masks:True_n:21860.normalizer \
-  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/fixed_horizon_icu_exit/structured_r4_dense_norm_control/12h
-done
+  --normalizer_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers \
+  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/fixed_horizon_icu_exit/12h
 
 
-Exp2B/C:
-running: h24 B seeds 0-4
-h48 B seeds 0-4
-h24 C seeds 0-4
-h48 C seeds 0-4
-h96 C seeds 0-4
-not run: 
-h168 B seeds 0-4
+
+
+
 
 TODO: are results in summary viusalization all using test or val?
 describe the dataset and models
-
-
-for seed in 0 1 2 3 4; do
-python -m mimic4models.fixed_horizon_icu_exit.main \
-  --network mimic4models/keras_models/lstm.py \
-  --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay \
-  --dim 16 \
-  --depth 2 \
-  --dropout 0.3 \
-  --batch_size 8 \
-  --horizon 48 \
-  --timestep 1.0 \
-  --sampling_interval 4 \
-  --normalizer_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers \
-  --sampling_strategy structured \
-  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/fixed_horizon_icu_exit/structured/48h/4h \
-  --seed "$seed"
-done
-
-for seed in 0 1 2 3 4; do
-python -m mimic4models.fixed_horizon_icu_exit.main \
-  --network mimic4models/keras_models/lstm.py \
-  --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay \
-  --horizon 96 \
-  --dim 16 \
-  --depth 2 \
-  --dropout 0.3 \
-  --batch_size 8 \
-  --timestep 1.0 \
-  --sampling_interval 4 \
-  --sampling_seed 100 \
-  --normalizer_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers \
-  --sampling_strategy random_matched \
-  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/fixed_horizon_icu_exit/random_matched/96h/4h \
-  --seed "$seed"
-done
+are the performance reasonable?
 
 
 

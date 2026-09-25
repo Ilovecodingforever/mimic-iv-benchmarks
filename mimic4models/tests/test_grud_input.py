@@ -10,6 +10,8 @@ if __package__ is None or __package__ == '':
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
 from mimic4models.fixed_horizon_icu_exit.matched_count_control.sampling import apply_sampling_to_example
+from mimic4models.fixed_horizon_icu_exit.raw import (
+    RawBatchSequence, RawObservedNormalizer, RawSequenceEncoder, pad_raw_batch)
 from mimic4models.preprocessing import Discretizer
 from mimic4models.keras_models.grud import (
     Network,
@@ -19,6 +21,22 @@ from mimic4models.keras_models.grud import (
     value_mask_mapping,
 )
 
+
+
+
+RAW_HEADER = ['Hours', 'Heart Rate', 'Glucose', 'Oxygen saturation']
+RAW_TOY_ROWS = np.asarray([
+    ['0.2', '82', '', ''],
+    ['0.7', '', '', '98'],
+    ['2.4', '', '135', ''],
+    ['5.1', '91', '', ''],
+], dtype=object)
+
+
+def raw_grud_toy():
+    encoder = RawSequenceEncoder(include_timestamps=True)
+    encoded, header = encoder.transform(RAW_TOY_ROWS, header=RAW_HEADER, end=24.0)
+    return encoded, header.split(','), encoder
 
 def discretizer_header():
     d = Discretizer(timestep=1.0, store_masks=True,
@@ -176,7 +194,140 @@ def structured_r8_diagnostic():
     }
 
 
+
+
+def test_raw_encoder_preserves_actual_hours_and_normalizer_leaves_timestamps():
+    encoded, header, encoder = raw_grud_toy()
+    assert header[-1] == 'Hours'
+    assert encoded.shape == (4, 77)
+    assert np.allclose(encoded[:, header.index('Hours')], [0.2, 0.7, 2.4, 5.1])
+
+    normalizer = RawObservedNormalizer(encoder.continuous_value_fields(),
+                                       encoder.continuous_mask_fields())
+    normalizer._means = np.zeros((len(encoder.continuous_value_fields()),), dtype=float)
+    normalizer._stds = np.ones((len(encoder.continuous_value_fields()),), dtype=float)
+    normalized = normalizer.transform(encoded)
+    assert np.allclose(normalized[:, header.index('Hours')], [0.2, 0.7, 2.4, 5.1])
+
+
+def test_raw_grud_split_uses_irregular_hours_and_matching_value_mask_shapes():
+    encoded, header, _ = raw_grud_toy()
+    values, masks, timestamps = split_grud_inputs(encoded[None, :, :], header, timestep=0.0)
+
+    assert values.shape == masks.shape
+    assert timestamps.shape == (1, 4, 1)
+    assert np.allclose(timestamps[0, :, 0], [0.2, 0.7, 2.4, 5.1])
+
+    _, _, sources = value_mask_mapping(header)
+    hr_pos = sources.index('Heart Rate')
+    glucose_pos = sources.index('Glucose')
+    spo2_pos = sources.index('Oxygen saturation')
+    assert np.array_equal(masks[0, :, hr_pos], [1, 0, 0, 1])
+    assert np.array_equal(masks[0, :, glucose_pos], [0, 0, 1, 0])
+    assert np.array_equal(masks[0, :, spo2_pos], [0, 1, 0, 0])
+
+
+def test_raw_categorical_masks_expand_to_one_hot_value_dimensions():
+    encoder = RawSequenceEncoder(include_timestamps=True)
+    encoded, header = encoder.transform(np.asarray([['1.0', '1.0']], dtype=object),
+                                        header=['Hours', 'Capillary refill rate'], end=24.0)
+    header = header.split(',')
+    values, masks, timestamps = split_grud_inputs(encoded[None, :, :], header, timestep=0.0)
+    assert values.shape == masks.shape
+    assert timestamps.shape == (1, 1, 1)
+    assert timestamps[0, 0, 0] == 1.0
+
+    _, _, sources = value_mask_mapping(header)
+    positions = [i for i, source in enumerate(sources) if source == 'Capillary refill rate']
+    assert len(positions) > 1
+    for pos in positions:
+        assert masks[0, 0, pos] == 1.0
+
+
+def test_raw_irregular_elapsed_time_uses_actual_timestamp_gaps():
+    encoded, header, _ = raw_grud_toy()
+    _, masks, timestamps = split_grud_inputs(encoded[None, :, :], header, timestep=0.0)
+    _, _, sources = value_mask_mapping(header)
+    hr_pos = sources.index('Heart Rate')
+    glucose_pos = sources.index('Glucose')
+
+    delta = elapsed_since_observed(timestamps, masks)[0]
+    assert np.allclose(delta[:, hr_pos], [0.0, 0.5, 2.2, 4.9])
+    assert np.allclose(delta[:, glucose_pos], [0.0, 0.5, 2.2, 2.7])
+
+
+def test_raw_structured_sampling_preserves_retained_event_times_and_larger_gaps():
+    raw_header = ['Hours', 'Heart Rate']
+    rows = np.asarray([[str(float(hour)), str(80 + hour)] for hour in range(12)], dtype=object)
+    example = {'X': rows, 'header': raw_header, 't': 12.0,
+               'name': 'synthetic_episode.csv', 'y': 0}
+    thinned = apply_sampling_to_example(example, 'structured', 8)
+
+    encoder = RawSequenceEncoder(include_timestamps=True)
+    dense, dense_header = encoder.transform(example['X'], header=raw_header, end=example['t'])
+    thin, thin_header = encoder.transform(thinned['X'], header=raw_header, end=example['t'])
+    dense_header = dense_header.split(',')
+    thin_header = thin_header.split(',')
+
+    _, dense_masks, dense_timestamps = split_grud_inputs(dense[None, :, :], dense_header, 0.0)
+    _, thin_masks, thin_timestamps = split_grud_inputs(thin[None, :, :], thin_header, 0.0)
+    retained_times = thinned['X'][:, 0].astype('float32')
+    assert np.allclose(thin_timestamps[0, :, 0], retained_times)
+    assert not np.allclose(thin_timestamps[0, :, 0], np.arange(thin.shape[0], dtype='float32'))
+    assert not np.allclose(thin_timestamps[0, :, 0],
+                           np.arange(thin.shape[0], dtype='float32') * 8.0)
+
+    _, _, sources = value_mask_mapping(dense_header)
+    hr_pos = sources.index('Heart Rate')
+    dense_delta = elapsed_since_observed(dense_timestamps, dense_masks)[0, :, hr_pos]
+    thin_delta = elapsed_since_observed(thin_timestamps, thin_masks)[0, :, hr_pos]
+    assert thin_delta.max() > dense_delta.max()
+
+
+def test_raw_grud_padding_does_not_change_predictions():
+    np.random.seed(321)
+    encoded, header, _ = raw_grud_toy()
+    longer = np.concatenate([encoded,
+                             encoded[-1:, :].copy(),
+                             encoded[-1:, :].copy()], axis=0)
+    longer[4, header.index('Hours')] = 6.4
+    longer[5, header.index('Hours')] = 8.0
+
+    model = Network(dim=3, batch_norm=False, dropout=0.0, rec_dropout=0.0,
+                    task='ihm', header=header, raw_sequence_mask=True)
+    single = prepare_input(pad_raw_batch([encoded]), header=header, timestep=0.0)
+    batched = prepare_input(pad_raw_batch([encoded, longer]), header=header, timestep=0.0)
+
+    pred_single = model.predict(single, batch_size=1, verbose=0)[0]
+    pred_batched = model.predict(batched, batch_size=2, verbose=0)[0]
+    assert np.allclose(pred_single, pred_batched, atol=1e-6, rtol=1e-6)
+
+
+def test_raw_batch_sequence_can_prepare_grud_inputs_after_padding():
+    encoded, header, _ = raw_grud_toy()
+    shorter = encoded[:2]
+    seq = RawBatchSequence([shorter, encoded], np.asarray([0, 1]), batch_size=2,
+                           shuffle=False,
+                           prepare_input=lambda X: prepare_input(X, header=header, timestep=0.0))
+    x_batch, y_batch = seq[0]
+    assert list(y_batch) == [0, 1]
+    assert isinstance(x_batch, list)
+    assert x_batch[0].shape == x_batch[1].shape == (2, 4, 59)
+    assert x_batch[2].shape == (2, 4, 1)
+    assert np.allclose(x_batch[2][0, :2, 0], [0.2, 0.7])
+    assert np.allclose(x_batch[2][0, 2:, 0], [0.0, 0.0])
+
 def run_all():
+    test_raw_encoder_preserves_actual_hours_and_normalizer_leaves_timestamps()
+    print('raw timestamp preservation: ok')
+    test_raw_grud_split_uses_irregular_hours_and_matching_value_mask_shapes()
+    print('raw irregular GRU-D split: ok')
+    test_raw_categorical_masks_expand_to_one_hot_value_dimensions()
+    print('raw categorical mask expansion: ok')
+    test_raw_irregular_elapsed_time_uses_actual_timestamp_gaps()
+    print('raw irregular elapsed gaps: ok')
+    test_raw_structured_sampling_preserves_retained_event_times_and_larger_gaps()
+    print('raw structured sampling timestamps: ok')
     test_grud_rejects_depth_greater_than_one()
     print('depth validation: ok')
     test_continuous_mask_mapping()
@@ -190,6 +341,10 @@ def run_all():
     print('elapsed feature B:', elapsed_b.astype(int).tolist())
     max_diff = test_previous_imputed_values_are_ignored_when_mask_zero()
     print('missing-position value perturbation max abs diff:', max_diff)
+    test_raw_grud_padding_does_not_change_predictions()
+    print('raw padding prediction equivalence: ok')
+    test_raw_batch_sequence_can_prepare_grud_inputs_after_padding()
+    print('raw batch prepare hook: ok')
     diag = structured_r8_diagnostic()
     print('dense grid shape:', diag['dense_shape'])
     print('structured-r8 grid shape:', diag['structured_shape'])

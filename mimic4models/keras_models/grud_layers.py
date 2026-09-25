@@ -344,15 +344,31 @@ class GRUD(GRU):
         if has_arg(self.cell.call, 'training'):
             kwargs['training'] = training
 
-        def step(step_inputs, states):
-            return self.cell.call(step_inputs, states, **kwargs)
-
-        concatenated_inputs = K.concatenate(inputs, axis=-1)
         if isinstance(mask, list):
             mask = mask[0]
+        if mask is not None:
+            mask = K.expand_dims(K.cast(mask, K.floatx()), axis=-1)
+
+            def step(step_inputs, states):
+                step_mask = step_inputs[:, -1:]
+                step_inputs = step_inputs[:, :-1]
+                output, new_states = self.cell.call(step_inputs, states, **kwargs)
+                output = step_mask * output + (1.0 - step_mask) * states[0]
+                new_states = [step_mask * new_state + (1.0 - step_mask) * old_state
+                              for new_state, old_state in zip(new_states, states)]
+                return output, new_states
+
+            concatenated_inputs = K.concatenate(inputs + [mask], axis=-1)
+            rnn_mask = None
+        else:
+            def step(step_inputs, states):
+                return self.cell.call(step_inputs, states, **kwargs)
+
+            concatenated_inputs = K.concatenate(inputs, axis=-1)
+            rnn_mask = None
         last_output, outputs, states = K.rnn(
             step, concatenated_inputs, initial_state, go_backwards=self.go_backwards,
-            mask=mask, unroll=self.unroll, input_length=timesteps)
+            mask=rnn_mask, unroll=self.unroll, input_length=timesteps)
         if self.stateful:
             updates = []
             for i, state in enumerate(states):
