@@ -98,6 +98,75 @@ def prepare_input(X, header, timestep=1.0, **kwargs):
     return [values, masks, timestamps]
 
 
+def raw_grud_real_row_mask_sanity(sequences, header, lengths=None, max_violations=10):
+    """Check that real raw rows have at least one expanded GRU-D mask bit.
+
+    ``sequences`` may be a list of unpadded ``(T, D)`` arrays, one ``(T, D)``
+    array, or a padded ``(N, T, D)`` batch. When checking a padded batch, pass
+    ``lengths`` so padded all-zero rows are excluded from the real-row count.
+    """
+    if isinstance(sequences, np.ndarray):
+        if sequences.ndim == 2:
+            seqs = [sequences]
+        elif sequences.ndim == 3:
+            seqs = [sequences[i] for i in range(sequences.shape[0])]
+        else:
+            raise ValueError('raw GRU-D sanity check expects 2D/3D arrays, got {}'.format(sequences.shape))
+    else:
+        seqs = list(sequences)
+
+    if lengths is None:
+        lengths = [np.asarray(seq).shape[0] for seq in seqs]
+    else:
+        lengths = list(lengths)
+    if len(seqs) != len(lengths):
+        raise ValueError('sequences and lengths must have the same number of examples')
+
+    violations = []
+    rows_checked = 0
+    all_zero_rows = 0
+    names = _as_header_list(header)
+    timestamp_i = names.index(RAW_TIMESTAMP_FIELD) if RAW_TIMESTAMP_FIELD in names else None
+
+    for example_i, (seq, length) in enumerate(zip(seqs, lengths)):
+        seq = np.asarray(seq)
+        length = int(length)
+        if seq.ndim != 2:
+            raise ValueError('raw sequence {} must be 2D, got {}'.format(example_i, seq.shape))
+        if length < 0 or length > seq.shape[0]:
+            raise ValueError('invalid real length {} for sequence {} with shape {}'.format(
+                length, example_i, seq.shape))
+        if length == 0:
+            continue
+        _, masks, _ = split_grud_inputs(seq[None, :length, :], names, timestep=0.0)
+        real_has_observation = np.any(masks[0] != 0.0, axis=-1)
+        rows_checked += int(length)
+        bad_rows = np.where(~real_has_observation)[0]
+        all_zero_rows += int(bad_rows.shape[0])
+        for row_i in bad_rows[:max(0, int(max_violations) - len(violations))]:
+            item = {'example_index': int(example_i), 'row_index': int(row_i)}
+            if timestamp_i is not None:
+                item['timestamp'] = float(seq[row_i, timestamp_i])
+            violations.append(item)
+
+    return {'examples_checked': len(seqs),
+            'rows_checked': rows_checked,
+            'all_zero_real_rows': all_zero_rows,
+            'violations': violations}
+
+
+def print_raw_grud_real_row_mask_sanity(sequences, header, lengths=None, max_violations=10):
+    report = raw_grud_real_row_mask_sanity(
+        sequences, header, lengths=lengths, max_violations=max_violations)
+    print('raw GRU-D real-row mask sanity check')
+    print('examples checked: {}'.format(report['examples_checked']))
+    print('rows checked: {}'.format(report['rows_checked']))
+    print('all-zero real rows: {}'.format(report['all_zero_real_rows']))
+    if report['violations']:
+        print('first violations: {}'.format(report['violations']))
+    return report
+
+
 def elapsed_since_observed(timestamps, masks):
     """Numpy mirror of GRU-D timestamp-state delta logic for sanity checks."""
     timestamps = np.asarray(timestamps, dtype='float32')

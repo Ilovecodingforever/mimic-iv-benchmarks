@@ -17,6 +17,7 @@ from mimic4models.keras_models.grud import (
     Network,
     elapsed_since_observed,
     prepare_input,
+    raw_grud_real_row_mask_sanity,
     split_grud_inputs,
     value_mask_mapping,
 )
@@ -329,6 +330,33 @@ def test_raw_batch_sequence_can_prepare_grud_inputs_after_padding():
     assert np.allclose(x_batch[2][0, :2, 0], [0.0, 0.5])
     assert np.allclose(x_batch[2][0, 2:, 0], [0.0, 0.0])
 
+def test_raw_grud_real_row_mask_sanity_detects_empty_real_rows_not_padding():
+    encoded, header, _ = raw_grud_toy()
+    clean_report = raw_grud_real_row_mask_sanity([encoded], header)
+    assert clean_report['examples_checked'] == 1
+    assert clean_report['rows_checked'] == encoded.shape[0]
+    assert clean_report['all_zero_real_rows'] == 0
+    assert clean_report['violations'] == []
+
+    encoder = RawSequenceEncoder(include_timestamps=True)
+    empty_row, _ = encoder.transform(np.asarray([['9.0', '', '', '']], dtype=object),
+                                     header=RAW_HEADER, end=24.0)
+    with_empty = np.concatenate([encoded[:1], empty_row, encoded[1:]], axis=0)
+    bad_report = raw_grud_real_row_mask_sanity([with_empty], header)
+    assert bad_report['rows_checked'] == encoded.shape[0] + 1
+    assert bad_report['all_zero_real_rows'] == 1
+    assert bad_report['violations'] == [
+        {'example_index': 0, 'row_index': 1, 'timestamp': 9.0}
+    ]
+
+    padded = pad_raw_batch([encoded[:2], encoded])
+    padded_report = raw_grud_real_row_mask_sanity(
+        padded, header, lengths=[2, encoded.shape[0]])
+    assert padded_report['examples_checked'] == 2
+    assert padded_report['rows_checked'] == 2 + encoded.shape[0]
+    assert padded_report['all_zero_real_rows'] == 0
+    assert padded_report['violations'] == []
+
 def run_all():
     test_raw_encoder_preserves_actual_hours_and_normalizer_leaves_timestamps()
     print('raw timestamp preservation: ok')
@@ -357,6 +385,8 @@ def run_all():
     print('raw padding prediction equivalence: ok')
     test_raw_batch_sequence_can_prepare_grud_inputs_after_padding()
     print('raw batch prepare hook: ok')
+    test_raw_grud_real_row_mask_sanity_detects_empty_real_rows_not_padding()
+    print('raw real-row mask sanity diagnostic: ok')
     diag = structured_r8_diagnostic()
     print('dense grid shape:', diag['dense_shape'])
     print('structured-r8 grid shape:', diag['structured_shape'])
