@@ -77,6 +77,10 @@ def split_grud_inputs(X, header, timestep):
     if RAW_TIMESTAMP_FIELD in names:
         timestamp_i = names.index(RAW_TIMESTAMP_FIELD)
         timestamps = X[:, :, timestamp_i:timestamp_i + 1].astype('float32')
+        first_timestamp = timestamps[:, 0:1, :]
+        timestamps = timestamps - first_timestamp
+        valid_timesteps = np.any(masks != 0.0, axis=-1, keepdims=True)
+        timestamps = np.where(valid_timesteps, timestamps, 0.0).astype('float32')
     else:
         timestamps = timestamps_for_batch(X.shape[0], X.shape[1], timestep)
     return values, masks, timestamps

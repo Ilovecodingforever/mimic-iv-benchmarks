@@ -96,6 +96,8 @@ def test_grud_input_shapes_and_mask_expansion():
     assert values.shape == (2, 24, 59)
     assert masks.shape == values.shape
     assert timestamps.shape == (2, 24, 1)
+    assert np.array_equal(timestamps[0, :, 0], np.arange(24, dtype='float32'))
+    assert np.array_equal(timestamps[1, :, 0], np.arange(24, dtype='float32'))
     assert np.all((masks == 0.0) | (masks == 1.0))
 
     hr_value_pos = sources.index('Heart Rate')
@@ -210,13 +212,15 @@ def test_raw_encoder_preserves_actual_hours_and_normalizer_leaves_timestamps():
     assert np.allclose(normalized[:, header.index('Hours')], [0.2, 0.7, 2.4, 5.1])
 
 
-def test_raw_grud_split_uses_irregular_hours_and_matching_value_mask_shapes():
+def test_raw_grud_split_shifts_irregular_hours_and_matching_value_mask_shapes():
     encoded, header, _ = raw_grud_toy()
+    assert np.allclose(encoded[:, header.index('Hours')], [0.2, 0.7, 2.4, 5.1])
     values, masks, timestamps = split_grud_inputs(encoded[None, :, :], header, timestep=0.0)
 
     assert values.shape == masks.shape
     assert timestamps.shape == (1, 4, 1)
-    assert np.allclose(timestamps[0, :, 0], [0.2, 0.7, 2.4, 5.1])
+    assert np.allclose(timestamps[0, :, 0], [0.0, 0.5, 2.2, 4.9])
+    assert np.allclose(np.diff(timestamps[0, :, 0]), np.diff([0.2, 0.7, 2.4, 5.1]))
 
     _, _, sources = value_mask_mapping(header)
     hr_pos = sources.index('Heart Rate')
@@ -234,8 +238,9 @@ def test_raw_categorical_masks_expand_to_one_hot_value_dimensions():
     header = header.split(',')
     values, masks, timestamps = split_grud_inputs(encoded[None, :, :], header, timestep=0.0)
     assert values.shape == masks.shape
+    assert encoded[0, header.index('Hours')] == 1.0
     assert timestamps.shape == (1, 1, 1)
-    assert timestamps[0, 0, 0] == 1.0
+    assert timestamps[0, 0, 0] == 0.0
 
     _, _, sources = value_mask_mapping(header)
     positions = [i for i, source in enumerate(sources) if source == 'Capillary refill rate']
@@ -256,26 +261,33 @@ def test_raw_irregular_elapsed_time_uses_actual_timestamp_gaps():
     assert np.allclose(delta[:, glucose_pos], [0.0, 0.5, 2.2, 2.7])
 
 
-def test_raw_structured_sampling_preserves_retained_event_times_and_larger_gaps():
+def test_raw_frequency_sampling_preserves_absolute_times_before_grud_shift():
     raw_header = ['Hours', 'Heart Rate']
     rows = np.asarray([[str(float(hour)), str(80 + hour)] for hour in range(12)], dtype=object)
     example = {'X': rows, 'header': raw_header, 't': 12.0,
                'name': 'synthetic_episode.csv', 'y': 0}
-    thinned = apply_sampling_to_example(example, 'structured', 8)
 
     encoder = RawSequenceEncoder(include_timestamps=True)
     dense, dense_header = encoder.transform(example['X'], header=raw_header, end=example['t'])
-    thin, thin_header = encoder.transform(thinned['X'], header=raw_header, end=example['t'])
     dense_header = dense_header.split(',')
-    thin_header = thin_header.split(',')
-
     _, dense_masks, dense_timestamps = split_grud_inputs(dense[None, :, :], dense_header, 0.0)
+
+    for strategy in ('structured', 'random_matched'):
+        thinned = apply_sampling_to_example(example, strategy, 8, sampling_seed=777)
+        thin, thin_header = encoder.transform(thinned['X'], header=raw_header, end=example['t'])
+        thin_header = thin_header.split(',')
+        retained_times = thinned['X'][:, 0].astype('float32')
+
+        assert np.allclose(thin[:, thin_header.index('Hours')], retained_times)
+        _, thin_masks, thin_timestamps = split_grud_inputs(thin[None, :, :], thin_header, 0.0)
+        shifted = retained_times - retained_times[0]
+        assert np.allclose(thin_timestamps[0, :, 0], shifted)
+        assert np.allclose(np.diff(thin_timestamps[0, :, 0]), np.diff(retained_times))
+
+    structured = apply_sampling_to_example(example, 'structured', 8)
+    thin, thin_header = encoder.transform(structured['X'], header=raw_header, end=example['t'])
+    thin_header = thin_header.split(',')
     _, thin_masks, thin_timestamps = split_grud_inputs(thin[None, :, :], thin_header, 0.0)
-    retained_times = thinned['X'][:, 0].astype('float32')
-    assert np.allclose(thin_timestamps[0, :, 0], retained_times)
-    assert not np.allclose(thin_timestamps[0, :, 0], np.arange(thin.shape[0], dtype='float32'))
-    assert not np.allclose(thin_timestamps[0, :, 0],
-                           np.arange(thin.shape[0], dtype='float32') * 8.0)
 
     _, _, sources = value_mask_mapping(dense_header)
     hr_pos = sources.index('Heart Rate')
@@ -314,20 +326,20 @@ def test_raw_batch_sequence_can_prepare_grud_inputs_after_padding():
     assert isinstance(x_batch, list)
     assert x_batch[0].shape == x_batch[1].shape == (2, 4, 59)
     assert x_batch[2].shape == (2, 4, 1)
-    assert np.allclose(x_batch[2][0, :2, 0], [0.2, 0.7])
+    assert np.allclose(x_batch[2][0, :2, 0], [0.0, 0.5])
     assert np.allclose(x_batch[2][0, 2:, 0], [0.0, 0.0])
 
 def run_all():
     test_raw_encoder_preserves_actual_hours_and_normalizer_leaves_timestamps()
     print('raw timestamp preservation: ok')
-    test_raw_grud_split_uses_irregular_hours_and_matching_value_mask_shapes()
-    print('raw irregular GRU-D split: ok')
+    test_raw_grud_split_shifts_irregular_hours_and_matching_value_mask_shapes()
+    print('raw irregular GRU-D shifted split: ok')
     test_raw_categorical_masks_expand_to_one_hot_value_dimensions()
     print('raw categorical mask expansion: ok')
     test_raw_irregular_elapsed_time_uses_actual_timestamp_gaps()
     print('raw irregular elapsed gaps: ok')
-    test_raw_structured_sampling_preserves_retained_event_times_and_larger_gaps()
-    print('raw structured sampling timestamps: ok')
+    test_raw_frequency_sampling_preserves_absolute_times_before_grud_shift()
+    print('raw frequency sampling timestamps and GRU-D shift: ok')
     test_grud_rejects_depth_greater_than_one()
     print('depth validation: ok')
     test_continuous_mask_mapping()
