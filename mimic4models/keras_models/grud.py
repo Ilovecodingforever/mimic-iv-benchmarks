@@ -155,10 +155,13 @@ def raw_grud_real_row_mask_sanity(sequences, header, lengths=None, max_violation
             'violations': violations}
 
 
-def print_raw_grud_real_row_mask_sanity(sequences, header, lengths=None, max_violations=10):
+def print_raw_grud_real_row_mask_sanity(sequences, header, lengths=None, max_violations=10, label=None):
     report = raw_grud_real_row_mask_sanity(
         sequences, header, lengths=lengths, max_violations=max_violations)
-    print('raw GRU-D real-row mask sanity check')
+    heading = 'raw GRU-D real-row mask sanity check'
+    if label is not None:
+        heading += ' [{}]'.format(label)
+    print(heading)
     print('examples checked: {}'.format(report['examples_checked']))
     print('rows checked: {}'.format(report['rows_checked']))
     print('all-zero real rows: {}'.format(report['all_zero_real_rows']))

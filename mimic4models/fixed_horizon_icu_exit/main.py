@@ -193,6 +193,20 @@ def maybe_prepare_model_data(model_module, data, header, timestep):
     return (maybe_prepare_model_input(model_module, data[0], header, timestep), data[1])
 
 
+def check_raw_grud_real_row_masks(model_module, sequences, header, split_name):
+    if not hasattr(model_module, 'print_raw_grud_real_row_mask_sanity'):
+        raise ValueError('Raw GRU-D timestamp model must expose '
+                         'print_raw_grud_real_row_mask_sanity().')
+    report = model_module.print_raw_grud_real_row_mask_sanity(
+        sequences, header, label=split_name)
+    if report['all_zero_real_rows'] > 0:
+        raise ValueError(
+            'Found {} real raw rows with no modeled observations in {} data. '
+            'First violations: {}'.format(
+                report['all_zero_real_rows'], split_name, report['violations']))
+    return report
+
+
 def raw_bucket_size(batch_size):
     return max(int(batch_size) * 100, int(batch_size))
 
@@ -426,6 +440,9 @@ def main():
         train_raw, val_raw = load_train_val_raw(train_reader, val_reader,
                                                 representation, normalizer, args.small_part,
                                                 raw_mode=raw_mode)
+        if raw_mode and raw_uses_timestamps:
+            check_raw_grud_real_row_masks(model_module, train_raw[0], feature_header, 'train')
+            check_raw_grud_real_row_masks(model_module, val_raw[0], feature_header, 'validation')
         raw_prepare_input = None
         if raw_mode and raw_uses_timestamps and hasattr(model_module, 'prepare_input'):
             def raw_prepare_input(X):
@@ -518,6 +535,9 @@ def main():
         data = ret["data"][0]
         labels = ret["data"][1]
         names = ret["names"]
+
+        if raw_mode and raw_uses_timestamps:
+            check_raw_grud_real_row_masks(model_module, data, feature_header, 'test')
 
         if raw_mode:
             raw_prepare_input = None
