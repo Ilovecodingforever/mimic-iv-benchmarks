@@ -14,6 +14,27 @@ if K.backend() == 'tensorflow':
 from keras.layers import Layer
 
 
+def patch_legacy_keras_h5py_attrs():
+    """Make old Keras weight loading tolerate h5py>=3 string attrs."""
+    try:
+        import h5py
+        attrs_cls = h5py._hl.attrs.AttributeManager
+    except Exception:
+        return
+    if getattr(attrs_cls, '_mimic4bench_legacy_keras_patch', False):
+        return
+    original_getitem = attrs_cls.__getitem__
+
+    def patched_getitem(self, name):
+        value = original_getitem(self, name)
+        if name in ('keras_version', 'backend') and isinstance(value, str):
+            return value.encode('utf8')
+        return value
+
+    attrs_cls.__getitem__ = patched_getitem
+    attrs_cls._mimic4bench_legacy_keras_patch = True
+
+
 
 
 # ===================== RUN ARTIFACTS ===================== #

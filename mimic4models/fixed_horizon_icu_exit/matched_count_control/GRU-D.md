@@ -329,7 +329,7 @@ Comparing the two helps separate:
 ### Raw GRU-D
 
 ```bash
-for seed in 0 1 2; do
+for seed in 3 4; do
 python -u -m mimic4models.fixed_horizon_icu_exit.main \
   --network mimic4models/keras_models/grud.py \
   --dim 16 \
@@ -354,7 +354,7 @@ done
 ### Raw GRU-D with structured 4-hour measurement frequency
 
 ```bash
-for seed in 0 1 2 3 4; do
+for seed in 3 4; do
 python -u -m mimic4models.fixed_horizon_icu_exit.main \
   --network mimic4models/keras_models/grud.py \
   --dim 16 \
@@ -365,14 +365,13 @@ python -u -m mimic4models.fixed_horizon_icu_exit.main \
   --horizon 12 \
   --timestep 0 \
   --sampling_strategy structured \
-  --sampling_interval 4 \  
+  --sampling_interval 8 \
   --epochs 100 \
   --seed "$seed" \
   --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay \
   --normalizer_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers \
-  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/fixed_horizon_icu_exit/structured/12h/4h
+  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/fixed_horizon_icu_exit/structured/12h/8h
 done
-
 ```
 
 ### Regular 1-hour GRU-D

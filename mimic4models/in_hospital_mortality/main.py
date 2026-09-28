@@ -105,6 +105,7 @@ model.summary()
 # Load model weights
 n_trained_chunks = 0
 if args.load_state != "":
+    keras_utils.patch_legacy_keras_h5py_attrs()
     model.load_weights(args.load_state)
     n_trained_chunks = int(re.match(".*epoch([0-9]+).*", args.load_state).group(1))
 
