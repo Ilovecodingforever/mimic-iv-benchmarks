@@ -112,6 +112,8 @@ python -m mimic4models.fixed_horizon_icu_exit.main \
   --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay/ \
   --print_stats
 
+python -m mimic4models.split_train_val /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/decompensation/
+
 
 # 1. Build 8h normalization statistics
 python -m mimic4models.create_normalizer_state \
@@ -177,13 +179,25 @@ python -u -m mimic4models.in_hospital_mortality.main \
 
 
 TODO: 
-decomp ts=12, 24
-ihm ts=0, seed=4
+decomp all, 2,4normalizer, raw
 
 
 
-for seed in 0 1 2 3 4; do
-    for ts in 1.0; do
+
+for ts in 24.0; do
+python -m mimic4models.create_normalizer_state \
+  --task decomp \
+  --timestep "$ts" \
+  --impute_strategy previous \
+  --start_time zero \
+  --store_masks \
+  --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/decompensation/ \
+  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers/
+
+
+
+for seed in 0; do
+    for ts in 1 2 4 8 12 24; do
 python -u -m mimic4models.decompensation.main \
   --network mimic4models/keras_models/lstm.py \
   --dim 16 \
@@ -228,7 +242,7 @@ for seed in 0 1 2 3 4; do
 done
 
 
-for seed in 2; do
+for seed in 4; do
     for horizon in 12 24 48 96 168; do
       python -u -m mimic4models.fixed_horizon_icu_exit.main \
         --network mimic4models/keras_models/raw_lstm.py \
@@ -321,3 +335,21 @@ To run a linear regression use this command:
 
 
 
+### Note on normalizer construction
+
+The current `create_normalizer_state.py` uses each task's default `train/listfile.csv` unless a task explicitly passes `train_listfile.csv`. Since `split_train_val.py` creates separate `train_listfile.csv` and `val_listfile.csv` files without modifying `train/listfile.csv`, normalizers generated with the current code may include examples that are later assigned to the validation split.
+
+This is a mild validation-data leakage through feature normalization statistics only; labels are not used to fit the normalizer. Test data are not involved.
+
+Affected tasks/experiments:
+
+- **Experiment 1 — In-hospital mortality**
+  - grid timesteps `1h, 2h, 4h, 8h, 12h, 24h` and raw
+- **Experiment 1 — Decompensation**
+  - grid timesteps `1h, 2h, 4h, 8h, 12h, 24h`
+
+Not affected:
+
+- **Fixed-horizon ICU-exit experiments (Exp2A/Exp2B/Exp3)**, because their normalizer construction already explicitly uses `train_listfile.csv`.
+
+For final experiments, `create_normalizer_state.py` should be updated so all tasks explicitly use `train_listfile.csv`, and the affected normalizers/models should be regenerated. Existing exploratory results can still be used provisionally, but should be rerun before final reporting.

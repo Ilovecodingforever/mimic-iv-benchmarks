@@ -76,20 +76,32 @@ def main():
     # create the reader
     reader = None
     dataset_dir = os.path.join(args.data, 'train')
+    train_listfile = os.path.join(args.data, 'train_listfile.csv')
+    if not os.path.exists(train_listfile):
+        raise IOError('Expected final training split listfile at {}. Run split_train_val.py before '
+                      'creating normalizer states.'.format(train_listfile))
+    # Use the final training split explicitly to avoid validation leakage through
+    # normalization statistics; dataset_dir/listfile.csv is the unsplit training file.
     if args.task == 'ihm':
-        reader = InHospitalMortalityReader(dataset_dir=dataset_dir, period_length=48.0)
+        reader = InHospitalMortalityReader(dataset_dir=dataset_dir,
+                                           listfile=train_listfile,
+                                           period_length=48.0)
     if args.task == 'decomp':
-        reader = DecompensationReader(dataset_dir=dataset_dir)
+        reader = DecompensationReader(dataset_dir=dataset_dir,
+                                      listfile=train_listfile)
     if args.task == 'los':
-        reader = LengthOfStayReader(dataset_dir=dataset_dir)
+        reader = LengthOfStayReader(dataset_dir=dataset_dir,
+                                    listfile=train_listfile)
     if args.task == 'fixed_horizon_icu_exit':
         reader = FixedHorizonIcuExitReader(dataset_dir=dataset_dir,
-                                           listfile=os.path.join(args.data, 'train_listfile.csv'),
+                                           listfile=train_listfile,
                                            horizon=args.horizon)
     if args.task == 'pheno':
-        reader = PhenotypingReader(dataset_dir=dataset_dir)
+        reader = PhenotypingReader(dataset_dir=dataset_dir,
+                                   listfile=train_listfile)
     if args.task == 'multi':
-        reader = MultitaskReader(dataset_dir=dataset_dir)
+        reader = MultitaskReader(dataset_dir=dataset_dir,
+                                 listfile=train_listfile)
 
     if args.sampling_strategy != 'none':
         reader = SamplingReader(reader, args.sampling_strategy,
