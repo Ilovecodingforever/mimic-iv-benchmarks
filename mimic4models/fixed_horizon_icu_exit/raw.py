@@ -11,6 +11,25 @@ import numpy as np
 from mimic4models import common_utils
 from mimic4models.preprocessing import DISCRETIZER_EPS
 
+class _NumpyCoreCompatUnpickler(pickle.Unpickler):
+    def find_class(self, module, name):
+        if module.startswith('numpy._core'):
+            module = 'numpy.core' + module[len('numpy._core'):]
+        return pickle.Unpickler.find_class(self, module, name)
+
+
+def _load_pickle_compat(load_file):
+    if platform.python_version()[0] == '2':
+        return pickle.load(load_file)
+    try:
+        return pickle.load(load_file, encoding='latin1')
+    except ImportError as e:
+        if 'numpy._core' not in str(e):
+            raise
+        load_file.seek(0)
+        return _NumpyCoreCompatUnpickler(load_file, encoding='latin1').load()
+
+
 
 class RawSequenceEncoder(object):
     """Encode original irregular rows as value features plus observation masks."""
@@ -167,10 +186,7 @@ class RawObservedNormalizer(object):
 
     def load_params(self, load_file_path):
         with open(load_file_path, 'rb') as load_file:
-            if platform.python_version()[0] == '2':
-                dct = pickle.load(load_file)
-            else:
-                dct = pickle.load(load_file, encoding='latin1')
+            dct = _load_pickle_compat(load_file)
         self._means = dct['means']
         self._stds = dct['stds']
         self._fields = list(dct.get('fields', self._fields))
