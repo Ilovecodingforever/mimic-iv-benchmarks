@@ -25,10 +25,21 @@ def patch_legacy_keras_h5py_attrs():
         return
     original_getitem = attrs_cls.__getitem__
 
+    def _encode_if_str(value):
+        if isinstance(value, str):
+            return value.encode('utf8')
+        return value
+
     def patched_getitem(self, name):
         value = original_getitem(self, name)
-        if name in ('keras_version', 'backend') and isinstance(value, str):
-            return value.encode('utf8')
+        if name in ('keras_version', 'backend'):
+            return _encode_if_str(value)
+        if name in ('layer_names', 'weight_names'):
+            # ponytail: old Keras expects bytes here; h5py>=3 may return str arrays.
+            try:
+                return np.asarray([_encode_if_str(x) for x in value])
+            except TypeError:
+                return value
         return value
 
     attrs_cls.__getitem__ = patched_getitem

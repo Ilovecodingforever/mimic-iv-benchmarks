@@ -173,6 +173,17 @@ y = in-hospital mortality
 
 This is a single binary classification example per eligible ICU stay.
 
+
+more details:
+
+The benchmark defines in-hospital mortality as whether the patient dies during the same hospital admission that contains the ICU stay.
+
+The model input consists of measurements from the first 48 hours of the ICU stay, and the target is a binary indicator of whether the patient dies before hospital discharge.
+
+The mortality event does not need to occur while the patient is physically in the ICU. A patient who survives the ICU stay but later dies during the same hospitalization is still labeled positive.
+
+Only ICU stays lasting at least 48 hours are included in the standard in-hospital mortality task.
+
 ---
 
 ## Decompensation
@@ -233,6 +244,25 @@ The model can treat LOS either as:
 - 10-bin classification.
 
 The default example in the README uses the 10-bin `"custom"` partition.
+
+
+more details:
+
+The benchmark length-of-stay task predicts the remaining duration of the ICU stay.
+
+For each ICU stay, prediction examples are generated repeatedly over time, approximately once per hour after the first several hours of the stay. At each prediction time, the target is the amount of time remaining until the ICU stay ends.
+
+Therefore, the LOS target represents:
+
+time until the end of the ICU stay
+
+rather than strictly:
+
+time until alive ICU discharge
+
+If a patient dies while still in the ICU, death also terminates the ICU stay. Such patients are not excluded from the LOS task, and the remaining-LOS target still measures the time until that ICU stay ends. The benchmark does not distinguish whether the stay ends because of discharge, transfer, or death.
+
+This distinction is important when deriving binary fixed-horizon ICU-exit outcomes from the LOS task. A label such as “ICU stay ends within the next 24 hours” can include patients whose ICU stay ends because of death unless mortality is explicitly handled as a separate outcome.
 
 ---
 
