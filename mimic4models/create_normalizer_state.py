@@ -27,8 +27,8 @@ def validate_normalizer_args(args):
     if args.task == 'fixed_horizon_icu_exit' and not args.store_masks:
         raise ValueError('fixed_horizon_icu_exit normalizers require masks because the training '
                          'pipeline uses store_masks=True and the filename convention assumes masks:True')
-    if is_raw_timestep(args.timestep) and args.task not in ('fixed_horizon_icu_exit', 'ihm'):
-        raise ValueError('--timestep 0 raw mode is implemented only for ihm and fixed_horizon_icu_exit')
+    if is_raw_timestep(args.timestep) and args.task not in ('fixed_horizon_icu_exit', 'ihm', 'decomp'):
+        raise ValueError('--timestep 0 raw mode is implemented only for ihm, decomp, and fixed_horizon_icu_exit')
 
 
 def main():
@@ -124,9 +124,12 @@ def main():
         normalizer = Normalizer(fields=continuous_channels)
 
     # read all examples and store the state of the normalizer
+    n_examples = reader.get_number_of_examples()
     n_samples = args.n_samples
     if n_samples == -1:
-        n_samples = reader.get_number_of_examples()
+        n_samples = n_examples
+    else:
+        n_samples = min(n_samples, n_examples)
 
     for i in range(n_samples):
         if i % 1000 == 0:
@@ -144,6 +147,10 @@ def main():
         file_name = os.path.join(
             args.output_dir,
             'ihm_raw_ts:0.00_observed_only_n:{}.normalizer'.format(n_samples))
+    elif args.task == 'decomp' and raw_mode:
+        file_name = os.path.join(
+            args.output_dir,
+            'decomp_raw_ts:0.00_observed_only_n:{}.normalizer'.format(n_samples))
     else:
         file_name = '{}_ts:{:.2f}_impute:{}_start:{}_masks:{}_n:{}.normalizer'.format(
             args.task, args.timestep, args.impute_strategy, args.start_time, args.store_masks, n_samples)

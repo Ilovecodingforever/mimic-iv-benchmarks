@@ -14,6 +14,8 @@ from mimic4models.decompensation import utils
 from mimic4benchmark.readers import DecompensationReader
 
 from mimic4models.preprocessing import Discretizer, Normalizer
+from mimic4models.fixed_horizon_icu_exit.raw import (
+    RawObservedNormalizer, RawSequenceEncoder, is_raw_timestep)
 from mimic4models import metrics
 from mimic4models import keras_utils
 from mimic4models import common_utils
@@ -22,6 +24,8 @@ from keras.callbacks import ModelCheckpoint, CSVLogger
 
 
 def decomp_normalizer_pattern(normalizer_dir, timestep):
+    if is_raw_timestep(timestep):
+        return os.path.join(normalizer_dir, 'decomp_raw_ts:0.00_observed_only_n:*.normalizer')
     return os.path.join(
         normalizer_dir,
         'decomp_ts:{:.2f}_impute:previous_start:zero_masks:True_n:*.normalizer'.format(
@@ -57,6 +61,13 @@ parser.add_argument('--normalizer_dir', type=str, default=None,
 parser.add_argument('--seed', type=int, default=49297)
 parser.set_defaults(deep_supervision=False)
 args = parser.parse_args()
+
+from keras import backend as K
+config = tf.ConfigProto()
+config.gpu_options.allow_growth = True
+sess = tf.Session(config=config)
+K.set_session(sess)
+
 random.seed(args.seed)
 np.random.seed(args.seed)
 tf.set_random_seed(args.seed)
@@ -64,6 +75,10 @@ print(args)
 
 if args.small_part:
     args.save_every = 2**30
+
+raw_mode = is_raw_timestep(args.timestep)
+if raw_mode and args.deep_supervision:
+    raise ValueError('timestep=0 raw mode is not supported with --deep_supervision for decompensation')
 
 # Build readers, discretizers, normalizers
 if args.deep_supervision:
@@ -79,24 +94,29 @@ else:
     val_reader = DecompensationReader(dataset_dir=os.path.join(args.data, 'train'),
                                       listfile=os.path.join(args.data, 'val_listfile.csv'))
 
-discretizer = Discretizer(timestep=args.timestep,
-                          store_masks=True,
-                          impute_strategy='previous',
-                          start_time='zero')
-
-if args.deep_supervision:
-    discretizer_header = discretizer.transform(train_data_loader._data["X"][0])[1].split(',')
+if raw_mode:
+    representation = RawSequenceEncoder()
+    feature_header = representation.header()
+    normalizer = RawObservedNormalizer(representation.continuous_value_fields(),
+                                       representation.continuous_mask_fields())
 else:
-    discretizer_header = discretizer.transform(train_reader.read_example(0)["X"])[1].split(',')
-cont_channels = [i for (i, x) in enumerate(discretizer_header) if x.find("->") == -1]
-
-normalizer = Normalizer(fields=cont_channels)  # choose here which columns to standardize
+    representation = Discretizer(timestep=args.timestep,
+                                 store_masks=True,
+                                 impute_strategy='previous',
+                                 start_time='zero')
+    if args.deep_supervision:
+        feature_header = representation.transform(train_data_loader._data["X"][0])[1].split(',')
+    else:
+        first = train_reader.read_example(0)
+        feature_header = representation.transform(first["X"], header=first["header"], end=first["t"])[1].split(',')
+    cont_channels = [i for (i, x) in enumerate(feature_header) if x.find("->") == -1]
+    normalizer = Normalizer(fields=cont_channels)  # choose here which columns to standardize
 normalizer_state = resolve_normalizer_state(args.normalizer_state, args.normalizer_dir, args.timestep)
 print("==> normalizer_state:", normalizer_state)
 normalizer.load_params(normalizer_state)
 
 args_dict = dict(args._get_kwargs())
-args_dict['header'] = discretizer_header
+args_dict['header'] = feature_header
 args_dict['task'] = 'decomp'
 
 
@@ -130,14 +150,15 @@ model.summary()
 # Load model weights
 n_trained_chunks = 0
 if args.load_state != "":
+    keras_utils.patch_legacy_keras_h5py_attrs()
     model.load_weights(args.load_state)
     n_trained_chunks = int(re.match(".*chunk([0-9]+).*", args.load_state).group(1))
 
 # Load data and prepare generators
 if args.deep_supervision:
-    train_data_gen = utils.BatchGenDeepSupervision(train_data_loader, discretizer,
+    train_data_gen = utils.BatchGenDeepSupervision(train_data_loader, representation,
                                                    normalizer, args.batch_size, shuffle=True)
-    val_data_gen = utils.BatchGenDeepSupervision(val_data_loader, discretizer,
+    val_data_gen = utils.BatchGenDeepSupervision(val_data_loader, representation,
                                                  normalizer, args.batch_size, shuffle=False)
 else:
     # Set number of batches in one epoch
@@ -146,9 +167,9 @@ else:
     if args.small_part:
         train_nbatches = 40
         val_nbatches = 40
-    train_data_gen = utils.BatchGen(train_reader, discretizer,
+    train_data_gen = utils.BatchGen(train_reader, representation,
                                     normalizer, args.batch_size, train_nbatches, True)
-    val_data_gen = utils.BatchGen(val_reader, discretizer,
+    val_data_gen = utils.BatchGen(val_reader, representation,
                                   normalizer, args.batch_size, val_nbatches, False)
 
 if args.mode == 'train':
@@ -202,7 +223,7 @@ elif args.mode == 'test':
         test_data_loader = common_utils.DeepSupervisionDataLoader(dataset_dir=os.path.join(args.data, 'test'),
                                                                   listfile=os.path.join(args.data, 'test_listfile.csv'),
                                                                   small_part=args.small_part)
-        test_data_gen = utils.BatchGenDeepSupervision(test_data_loader, discretizer,
+        test_data_gen = utils.BatchGenDeepSupervision(test_data_loader, representation,
                                                       normalizer, args.batch_size,
                                                       shuffle=False, return_names=True)
 
@@ -228,7 +249,7 @@ elif args.mode == 'test':
         test_reader = DecompensationReader(dataset_dir=os.path.join(args.data, 'test'),
                                            listfile=os.path.join(args.data, 'test_listfile.csv'))
 
-        test_data_gen = utils.BatchGen(test_reader, discretizer,
+        test_data_gen = utils.BatchGen(test_reader, representation,
                                        normalizer, args.batch_size,
                                        None, shuffle=False, return_names=True)  # put steps = None for a full test
 

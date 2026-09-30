@@ -8,8 +8,15 @@ import numpy as np
 import random
 
 
-def preprocess_chunk(data, ts, discretizer, normalizer=None):
-    data = [discretizer.transform(X, end=t)[0] for (X, t) in zip(data, ts)]
+def preprocess_chunk(data, ts, representation, normalizer=None, header=None):
+    if header is None:
+        headers = [None] * len(data)
+    elif len(header) == len(data) and len(data) and isinstance(header[0], (list, tuple, np.ndarray)):
+        headers = header
+    else:
+        headers = [header] * len(data)
+    data = [representation.transform(X, header=cur_header, end=t)[0]
+            for (X, t, cur_header) in zip(data, ts, headers)]
     if normalizer is not None:
         data = [normalizer.transform(X) for X in data]
     return data
@@ -52,8 +59,9 @@ class BatchGen(object):
                 ts = ret["t"]
                 ys = ret["y"]
                 names = ret["name"]
+                header = ret.get("header")
 
-                Xs = preprocess_chunk(Xs, ts, self.discretizer, self.normalizer)
+                Xs = preprocess_chunk(Xs, ts, self.discretizer, self.normalizer, header=header)
                 (Xs, ys, ts, names) = common_utils.sort_and_shuffle([Xs, ys, ts, names], B)
 
                 for i in range(0, current_size, B):

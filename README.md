@@ -135,9 +135,10 @@ python -m mimic4models.create_normalizer_state \
   --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers/
 
 
-for ts in 1.0 2.0 4.0 8.0 12.0 24.0; do
+for ts in 1.0; do
 python -m mimic4models.create_normalizer_state \
   --task decomp \
+  --n_samples 100000 \
   --timestep "$ts" \
   --impute_strategy previous \
   --start_time zero \
@@ -179,7 +180,7 @@ python -u -m mimic4models.in_hospital_mortality.main \
 
 
 TODO: 
-decomp all, 2,4normalizer, raw
+decomp: all with seed 4 , raw
 
 
 
@@ -212,7 +213,7 @@ python -u -m mimic4models.decompensation.main \
   --normalizer_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers \
   --output_dir "/heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/decompensation/${ts}h"
 done
-
+done
 
 
 
@@ -345,8 +346,6 @@ Affected tasks/experiments:
 
 - **Experiment 1 — In-hospital mortality**
   - grid timesteps `1h, 2h, 4h, 8h, 12h, 24h` and raw
-- **Experiment 1 — Decompensation**
-  - grid timesteps `1h, 2h, 4h, 8h, 12h, 24h`
 
 Not affected:
 

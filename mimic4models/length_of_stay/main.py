@@ -31,6 +31,13 @@ parser.add_argument('--output_dir', type=str, help='Directory relative which all
 args = parser.parse_args()
 print(args)
 
+import tensorflow as tf
+from keras import backend as K
+config = tf.ConfigProto()
+config.gpu_options.allow_growth = True
+sess = tf.Session(config=config)
+K.set_session(sess)
+
 if args.small_part:
     args.save_every = 2**30
 
