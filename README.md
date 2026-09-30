@@ -132,9 +132,18 @@ python -m mimic4models.create_normalizer_state \
   --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay/ \
   --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers/
 
+python -m mimic4models.create_normalizer_state \
+  --task decomp \
+  --timestep 8.0 \
+  --impute_strategy previous \
+  --start_time zero \
+  --store_masks \
+  --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/decompensation/ \
+  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers/
+
 
 # 2. Train 8h LSTM
-python -um mimic4models.in_hospital_mortality.main \
+python -u -m mimic4models.in_hospital_mortality.main \
   --network mimic4models/keras_models/lstm.py \
   --dim 16 \
   --timestep 8.0 \

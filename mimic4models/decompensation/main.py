@@ -6,6 +6,9 @@ import argparse
 import os
 import imp
 import re
+import glob
+import random
+import tensorflow as tf
 
 from mimic4models.decompensation import utils
 from mimic4benchmark.readers import DecompensationReader
@@ -18,6 +21,30 @@ from mimic4models import common_utils
 from keras.callbacks import ModelCheckpoint, CSVLogger
 
 
+def decomp_normalizer_pattern(normalizer_dir, timestep):
+    return os.path.join(
+        normalizer_dir,
+        'decomp_ts:{:.2f}_impute:previous_start:zero_masks:True_n:*.normalizer'.format(
+            float(timestep)))
+
+
+def resolve_normalizer_state(normalizer_state, normalizer_dir, timestep):
+    if normalizer_state is not None:
+        return normalizer_state
+    if normalizer_dir is None:
+        legacy = 'decomp_ts{}.input_str:previous.n1e5.start_time:zero.normalizer'.format(timestep)
+        return os.path.join(os.path.dirname(__file__), legacy)
+
+    pattern = decomp_normalizer_pattern(normalizer_dir, timestep)
+    matches = sorted(glob.glob(pattern))
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) == 0:
+        raise IOError('No decompensation normalizer found for pattern: {}'.format(pattern))
+    raise IOError('Multiple decompensation normalizers found for pattern: {}. Matches: {}'.format(
+        pattern, matches))
+
+
 parser = argparse.ArgumentParser()
 common_utils.add_common_arguments(parser)
 parser.add_argument('--deep_supervision', dest='deep_supervision', action='store_true')
@@ -25,8 +52,14 @@ parser.add_argument('--data', type=str, help='Path to the data of decompensation
                     default=os.path.join(os.path.dirname(__file__), '../../data/decompensation/'))
 parser.add_argument('--output_dir', type=str, help='Directory relative which all output files are stored',
                     default='.')
+parser.add_argument('--normalizer_dir', type=str, default=None,
+                    help='Directory containing decompensation normalizer states.')
+parser.add_argument('--seed', type=int, default=49297)
 parser.set_defaults(deep_supervision=False)
 args = parser.parse_args()
+random.seed(args.seed)
+np.random.seed(args.seed)
+tf.set_random_seed(args.seed)
 print(args)
 
 if args.small_part:
@@ -58,10 +91,8 @@ else:
 cont_channels = [i for (i, x) in enumerate(discretizer_header) if x.find("->") == -1]
 
 normalizer = Normalizer(fields=cont_channels)  # choose here which columns to standardize
-normalizer_state = args.normalizer_state
-if normalizer_state is None:
-    normalizer_state = 'decomp_ts{}.input_str:previous.n1e5.start_time:zero.normalizer'.format(args.timestep)
-    normalizer_state = os.path.join(os.path.dirname(__file__), normalizer_state)
+normalizer_state = resolve_normalizer_state(args.normalizer_state, args.normalizer_dir, args.timestep)
+print("==> normalizer_state:", normalizer_state)
 normalizer.load_params(normalizer_state)
 
 args_dict = dict(args._get_kwargs())
@@ -73,11 +104,12 @@ args_dict['task'] = 'decomp'
 print("==> using model {}".format(args.network))
 model_module = imp.load_source(os.path.basename(args.network), args.network)
 model = model_module.Network(**args_dict)
-suffix = "{}.bs{}{}{}.ts{}".format("" if not args.deep_supervision else ".dsup",
-                                   args.batch_size,
-                                   ".L1{}".format(args.l1) if args.l1 > 0 else "",
-                                   ".L2{}".format(args.l2) if args.l2 > 0 else "",
-                                   args.timestep)
+suffix = "{}.bs{}{}{}.ts{}.seed{}".format("" if not args.deep_supervision else ".dsup",
+                                           args.batch_size,
+                                           ".L1{}".format(args.l1) if args.l1 > 0 else "",
+                                           ".L2{}".format(args.l2) if args.l2 > 0 else "",
+                                           args.timestep,
+                                           args.seed)
 model.final_name = args.prefix + model.say_name() + suffix
 print("==> model.final_name:", model.final_name)
 
