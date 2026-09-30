@@ -176,6 +176,10 @@ python -u -m mimic4models.in_hospital_mortality.main \
 
 
 
+TODO: 
+decomp ts=12, 24
+ihm ts=0, seed=4
+
 
 
 for seed in 0 1 2 3 4; do

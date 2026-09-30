@@ -23,6 +23,9 @@ from mimic4models import common_utils
 
 from keras.callbacks import ModelCheckpoint, CSVLogger
 
+from keras.callbacks import CSVLogger, ModelCheckpoint
+from keras import backend as K
+
 
 def ihm_normalizer_pattern(normalizer_dir, timestep, imputation):
     if is_raw_timestep(timestep):
@@ -82,6 +85,12 @@ parser.add_argument('--normalizer_dir', type=str, default=None,
                     help='Directory containing in-hospital mortality normalizer states.')
 parser.add_argument('--seed', type=int, default=49297)
 args = parser.parse_args()
+
+config = tf.ConfigProto()
+config.gpu_options.allow_growth = True
+sess = tf.Session(config=config)
+K.set_session(sess)
+
 random.seed(args.seed)
 np.random.seed(args.seed)
 tf.set_random_seed(args.seed)
