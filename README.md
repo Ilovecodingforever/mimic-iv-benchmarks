@@ -132,14 +132,17 @@ python -m mimic4models.create_normalizer_state \
   --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay/ \
   --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers/
 
+
+for ts in 1.0 2.0 4.0 8.0 12.0 24.0; do
 python -m mimic4models.create_normalizer_state \
   --task decomp \
-  --timestep 8.0 \
+  --timestep "$ts" \
   --impute_strategy previous \
   --start_time zero \
   --store_masks \
   --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/decompensation/ \
   --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers/
+done
 
 
 # 2. Train 8h LSTM
@@ -156,17 +159,55 @@ python -u -m mimic4models.in_hospital_mortality.main \
   --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/in-hospital-mortality/results/8h
 
 
+
+for seed in 0 1 2 3 4; do
+  python -u -m mimic4models.in_hospital_mortality.main \
+    --network mimic4models/keras_models/raw_lstm.py \
+    --dim 16 \
+    --depth 2 \
+    --dropout 0.3 \
+    --mode train \
+    --batch_size 8 \
+    --epochs 100 \
+    --seed "$seed" \
+    --data "$DATA" \
+    --normalizer_dir "$NORM" \
+    --output_dir "$OUT/raw" \
+    --timestep 0
+done
+
+
+
+
+for seed in 0 1 2 3 4; do
+    for ts in 1.0; do
+python -u -m mimic4models.decompensation.main \
+  --network mimic4models/keras_models/lstm.py \
+  --dim 16 \
+  --depth 2 \
+  --dropout 0.3 \
+  --timestep "$ts" \
+  --mode train \
+  --batch_size 8 \
+  --epochs 100 \
+  --seed "$seed" \
+  --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/decompensation \
+  --normalizer_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers \
+  --output_dir "/heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/decompensation/${ts}h"
+done
+
+
+
+
 DATA=/heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay
 NORM=/heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers
 OUT=/heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/fixed_horizon_icu_exit
 
 for seed in 0 1 2 3 4; do
     for horizon in 12 24 48 96 168; do
-
       echo "========================================"
       echo "horizon=${horizon}h seed=${seed}"
       echo "========================================"
-
       python -u -m mimic4models.fixed_horizon_icu_exit.main \
         --network mimic4models/keras_models/lstm.py \
         --dim 16 \
@@ -180,9 +221,26 @@ for seed in 0 1 2 3 4; do
         --normalizer_dir "$NORM" \
         --output_dir "$OUT/${horizon}h" \
         --timestep 1
-
-    done
   done
+done
+
+
+for seed in 2; do
+    for horizon in 12 24 48 96 168; do
+      python -u -m mimic4models.fixed_horizon_icu_exit.main \
+        --network mimic4models/keras_models/raw_lstm.py \
+        --dim 16 \
+        --depth 2 \
+        --dropout 0.3 \
+        --mode train \
+        --batch_size 8 \
+        --horizon "$horizon" \
+        --seed "$seed" \
+        --data "$DATA" \
+        --normalizer_dir "$NORM" \
+        --output_dir "$OUT/${horizon}h" \
+        --timestep 0
+done
 done
 
 

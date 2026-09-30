@@ -32,7 +32,7 @@ def resolve_normalizer_state(normalizer_state, normalizer_dir, timestep):
     if normalizer_state is not None:
         return normalizer_state
     if normalizer_dir is None:
-        legacy = 'decomp_ts{}.input_str:previous.n1e5.start_time:zero.normalizer'.format(timestep)
+        legacy = 'decomp_ts{}.input_str_previous.n1e5.start_time:zero.normalizer'.format(timestep)
         return os.path.join(os.path.dirname(__file__), legacy)
 
     pattern = decomp_normalizer_pattern(normalizer_dir, timestep)
