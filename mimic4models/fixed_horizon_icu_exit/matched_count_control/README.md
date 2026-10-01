@@ -200,7 +200,6 @@ python -m mimic4models.fixed_horizon_icu_exit.main \
 
 
 
-
 TODO: are results in summary viusalization all using test or val?
 describe the dataset and models
 are the performance reasonable?

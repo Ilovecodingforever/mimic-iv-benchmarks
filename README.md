@@ -180,7 +180,7 @@ python -u -m mimic4models.in_hospital_mortality.main \
 
 
 TODO: 
-decomp: all with seed 4 , raw
+decomp: all with seed 4, raw with all seeds
 
 
 
@@ -193,7 +193,9 @@ python -m mimic4models.create_normalizer_state \
   --start_time zero \
   --store_masks \
   --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/decompensation/ \
-  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers/
+  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers/ \
+  --n_samples 100000
+done
 
 
 
@@ -352,3 +354,17 @@ Not affected:
 - **Fixed-horizon ICU-exit experiments (Exp2A/Exp2B/Exp3)**, because their normalizer construction already explicitly uses `train_listfile.csv`.
 
 For final experiments, `create_normalizer_state.py` should be updated so all tasks explicitly use `train_listfile.csv`, and the affected normalizers/models should be regenerated. Existing exploratory results can still be used provisionally, but should be rerun before final reporting.
+
+
+### Decompensation batch size and epoch definition
+
+The decompensation training loop follows the original MIMIC-III benchmark design. Unlike in-hospital mortality, which has one prediction example per ICU stay and trains with a conventional full-dataset epoch, decompensation is a repeated prediction task with many prediction-time examples per stay. The original benchmark therefore uses a streaming generator and defines each epoch as a fixed number of minibatches: 2,000 training batches and 1,000 validation batches. Length-of-stay uses the same pattern, while in-hospital mortality and fixed-horizon ICU exit do not.
+
+A consequence of this design is that changing `batch_size` also changes the number of examples processed per epoch. For example, the historical setting `batch_size=8` corresponds to 16,000 training examples and 8,000 validation examples per epoch, while `batch_size=32` would otherwise increase those totals to 64,000 and 32,000. This makes larger batch sizes change both optimization batch size and the effective data budget per epoch.
+
+To preserve the historical `batch_size=8` behavior while allowing larger batches for faster execution, decompensation is changed to use a fixed per-epoch example budget of 16,000 training examples and 8,000 validation examples, with the number of minibatches computed from the selected batch size. Thus `batch_size=8` still gives 2,000/1,000 batches exactly as before, while `batch_size=32` gives 500/250 batches. Previous experiments run with the old code and `batch_size=8` remain directly comparable. For future experiments, the same batch size should be used across all conditions and seeds within an experiment, because larger batches still imply fewer optimizer updates per epoch even when the number of examples is held fixed.
+
+LOS might need this change as well.
+
+Test evaluation is unchanged. Test mode already iterates over the full test set exactly once; changing `batch_size` only changes the number of inference batches, not which examples are evaluated.
+
