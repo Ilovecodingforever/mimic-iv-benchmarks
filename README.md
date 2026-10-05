@@ -148,6 +148,22 @@ python -m mimic4models.create_normalizer_state \
 done
 
 
+for ts in 24.0; do
+python -m mimic4models.create_normalizer_state \
+  --task decomp \
+  --timestep "$ts" \
+  --impute_strategy previous \
+  --start_time zero \
+  --store_masks \
+  --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/decompensation/ \
+  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers/ \
+  --n_samples 100000
+done
+
+
+
+
+
 # 2. Train 8h LSTM
 python -u -m mimic4models.in_hospital_mortality.main \
   --network mimic4models/keras_models/lstm.py \
@@ -180,22 +196,26 @@ python -u -m mimic4models.in_hospital_mortality.main \
 
 
 TODO: 
-decomp: all with seed 4, raw with all seeds
+decomp: all with seed 1 4, raw with all seeds
 
-
-
-
-for ts in 24.0; do
-python -m mimic4models.create_normalizer_state \
-  --task decomp \
-  --timestep "$ts" \
-  --impute_strategy previous \
-  --start_time zero \
-  --store_masks \
-  --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/decompensation/ \
-  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers/ \
-  --n_samples 100000
+for seed in 0 1 2 3 4; do
+python -u -m mimic4models.decompensation.main \
+  --network mimic4models/keras_models/raw_lstm.py \
+  --dim 16 \
+  --depth 2 \
+  --dropout 0.3 \
+  --timestep 0 \
+  --mode train \
+  --batch_size 320 \
+  --epochs 100 \
+  --seed "$seed" \
+  --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/decompensation \
+  --normalizer_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers \
+  --output_dir "/heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/decompensation/raw"
 done
+
+
+
 
 
 
@@ -208,7 +228,7 @@ python -u -m mimic4models.decompensation.main \
   --dropout 0.3 \
   --timestep "$ts" \
   --mode train \
-  --batch_size 8 \
+  --batch_size 320 \
   --epochs 100 \
   --seed "$seed" \
   --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/decompensation \
@@ -262,6 +282,11 @@ for seed in 4; do
         --timestep 0
 done
 done
+
+
+
+
+
 
 
 
