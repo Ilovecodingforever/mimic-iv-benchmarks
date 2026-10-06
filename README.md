@@ -195,8 +195,7 @@ python -u -m mimic4models.in_hospital_mortality.main \
 
 
 
-TODO: 
-decomp: all with seed 1 4, raw with all seeds
+
 
 for seed in 0 1 2 3 4; do
 python -u -m mimic4models.decompensation.main \
