@@ -7813,8 +7813,8 @@ a.anchor-link {
 <li><code>visualize_utils.py</code></li>
 </ul>
 <p>This summary consumes stable CSV exports written by those notebooks. If a source notebook has not yet been rerun after the export cells were added, its section is labeled <code>NOT AVAILABLE</code>. Partial seed sets are shown as partial, not suppressed.</p>
-<p>We report two complementary uncertainty estimates. The <strong>Student-t CI across model seeds</strong> varies the trained model: for each seed, we compute the paired performance difference between two conditions on the same test set, then form a Student-t CI over those seed-level differences. The test patients are fixed, while model initialization/training randomness varies. The <strong>paired patient-level bootstrap CI</strong> instead keeps the trained models fixed and repeatedly resamples patients with replacement. For each bootstrap sample, the paired performance difference is recomputed separately for every model seed using the same resampled patients, then averaged across seeds; the 2.5th and 97.5th percentiles of these bootstrap mean differences form the CI. Thus, this interval reflects uncertainty from the finite test population rather than variability from retraining the model.</p>
-<p>visualize_exp3_grud_frequency_shift.ipynb optionally consumes the LSTM Exp3 visualizer output from visualize_exp3_frequency_shift.ipynb, for summary</p>
+<p>We report two complementary uncertainty estimates. A <strong>Student-t CI across model seeds</strong> describes run-to-run variability: absolute-performance tables form it directly from the metric values across seeds, while contrast tables first compute a paired difference within each seed and then form the CI across those seed-level differences. The test patients are fixed while model initialization and training randomness vary. A <strong>paired patient-level bootstrap CI</strong> instead keeps the trained models fixed and repeatedly resamples patients with replacement. For across-seed contrasts, each bootstrap sample is reused for every model seed, the paired difference is recomputed per seed, and those differences are averaged; the 2.5th and 97.5th percentiles of the bootstrap mean differences form the CI. Thus, this interval reflects uncertainty from the finite test population rather than variability from retraining the model.</p>
+<p>For the descriptive cross-model summaries, <code>visualize_exp3_grud_frequency_shift.ipynb</code> optionally consumes the LSTM Exp3 exports written by <code>visualize_exp3_frequency_shift.ipynb</code>.</p>
 </div>
 </div>
 </div>
@@ -8295,14 +8295,14 @@ a.anchor-link {
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="1.-Experiment-1---Does-Measurement-Frequency-Matter?">1. Experiment 1 - Does Measurement Frequency Matter?<a class="anchor-link" href="#1.-Experiment-1---Does-Measurement-Frequency-Matter?">¶</a></h2><h3 id="Scientific-Question">Scientific Question<a class="anchor-link" href="#Scientific-Question">¶</a></h3><p>Does prediction performance for in-hospital mortality deteriorate when EHR measurements are represented at coarser temporal resolutions?</p>
-<h3 id="Experimental-Design">Experimental Design<a class="anchor-link" href="#Experimental-Design">¶</a></h3><p>Model: LSTM. Task: in-hospital mortality.</p>
-<p>Prediction time/horizon: mortality prediction uses the first 48 hours of ICU data as input and predicts in-hospital mortality for the remainder of the hospitalization. Unlike Exp2A, this is not a fixed future horizon such as 12h or 24h; the outcome is whether the patient dies before hospital discharge.</p>
-<p>Temporal resolution varies over the available timesteps, currently intended as 1h, 2h, 4h, 8h, 12h, and 24h. Training and test observation regimes match the same temporal resolution. Checkpoint selection is based on validation AUPRC; validation AUROC and test metrics are read at the same selected epoch.</p>
-<h3 id="Quantity-Being-Measured">Quantity Being Measured<a class="anchor-link" href="#Quantity-Being-Measured">¶</a></h3><p>Absolute validation/test performance is <code>M(r,s)</code> for resolution <code>r</code> and model seed <code>s</code>. Degradation is <code>Delta(r,s) = M(1h,s) - M(r,s)</code>, computed within seed before summarizing across seeds.</p>
-<p>Positive degradation means the coarser resolution performed worse than 1h. Zero means little or no difference. Negative means the coarser resolution performed better.</p>
-<h3 id="Why-This-Comparison-Is-Informative">Why This Comparison Is Informative<a class="anchor-link" href="#Why-This-Comparison-Is-Informative">¶</a></h3><p>It tests whether reducing measurement frequency alone is associated with lower predictive performance, while preserving the source notebook's checkpoint and test-prediction provenance rules.</p>
-<h3 id="Expected-Evidence">Expected Evidence<a class="anchor-link" href="#Expected-Evidence">¶</a></h3><p>If fine temporal information matters, degradation should become positive at sufficiently coarse resolutions. If frequency has little effect, performance and degradation should remain near flat. Non-monotonic behavior is possible and should be displayed.</p>
+<h2 id="1.-Experiment-1---Does-Measurement-Frequency-Matter?">1. Experiment 1 - Does Measurement Frequency Matter?<a class="anchor-link" href="#1.-Experiment-1---Does-Measurement-Frequency-Matter?">¶</a></h2><h3 id="Scientific-Question">Scientific Question<a class="anchor-link" href="#Scientific-Question">¶</a></h3><p>Does prediction performance deteriorate when EHR measurements are represented as raw event sequences or at progressively coarser temporal resolutions in the in-hospital mortality and decompensation tasks?</p>
+<h3 id="Experimental-Design">Experimental Design<a class="anchor-link" href="#Experimental-Design">¶</a></h3><p>Model family: LSTM. Tasks: in-hospital mortality and decompensation.</p>
+<p>For in-hospital mortality, each example uses the first 48 hours of ICU data and predicts death before hospital discharge. Decompensation is a repeated prediction task with multiple prediction times per stay and predicts mortality within the next 24 hours. Neither task uses the fixed ICU-exit horizons studied in Exp2A.</p>
+<p>Each task evaluates a raw event-sequence condition without explicit timestamp features plus regular grids at 1h, 2h, 4h, 8h, 12h, and 24h. Training and test representations match within each condition. Checkpoint selection is based on validation AUPRC; validation AUROC and test metrics are read at the same selected epoch.</p>
+<h3 id="Quantity-Being-Measured">Quantity Being Measured<a class="anchor-link" href="#Quantity-Being-Measured">¶</a></h3><p>Absolute validation/test performance is <code>M(c,s)</code> for condition <code>c</code> and model seed <code>s</code>. The comparison with the 1h reference is <code>Delta(c,s) = M(1h,s) - M(c,s)</code>, computed within seed before summarizing across seeds.</p>
+<p>Positive values mean the comparison condition performed worse than 1h; negative values mean it performed better. For grid conditions this is degradation under coarser resolution. For the raw condition it is a representation comparison, not a frequency ordering.</p>
+<h3 id="Why-This-Comparison-Is-Informative">Why This Comparison Is Informative<a class="anchor-link" href="#Why-This-Comparison-Is-Informative">¶</a></h3><p>Within the regular-grid conditions, it tests whether lower measurement frequency is associated with lower predictive performance. The raw condition provides a separate representation reference. Both tasks preserve the source notebook's checkpoint and test-prediction provenance rules.</p>
+<h3 id="Expected-Evidence">Expected Evidence<a class="anchor-link" href="#Expected-Evidence">¶</a></h3><p>If fine temporal information matters, the regular-grid degradation should become positive at sufficiently coarse resolutions. If frequency has little effect, grid performance and degradation should remain near flat. The raw comparison and non-monotonic grid behavior should be displayed without forcing them into that ordering.</p>
 <h3 id="Caveats">Caveats<a class="anchor-link" href="#Caveats">¶</a></h3><p>Strict monotonic degradation is not required. Across-seed CIs are not paired patient-level tests. Partial seed sets have unstable across-seed uncertainty.</p>
 </div>
 </div>
@@ -8504,17 +8504,6 @@ Exp1 source figure: Decompensation (bs=320) degradation relative to 1h
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=844a7e74">
-<div class="jp-Cell-inputWrapper" tabindex="0">
-<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
-</div>
-<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
-</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<p>TODO: add tasks, does best discretization changes, how different raw frequency</p>
-</div>
-</div>
-</div>
-</div>
 <div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=3309a0a9">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
@@ -8524,13 +8513,13 @@ Exp1 source figure: Decompensation (bs=320) degradation relative to 1h
 <h2 id="2.-Experiment-2A---Does-Frequency-Matter-More-For-Short-Horizons?">2. Experiment 2A - Does Frequency Matter More For Short Horizons?<a class="anchor-link" href="#2.-Experiment-2A---Does-Frequency-Matter-More-For-Short-Horizons?">¶</a></h2><h3 id="Scientific-Question">Scientific Question<a class="anchor-link" href="#Scientific-Question">¶</a></h3><p>At a fixed prediction time of 24h after ICU admission, is the cost of coarser measurement frequency larger for short prediction horizons than for long horizons?</p>
 <p>Connection to Experiment 1: Experiment 1 establishes whether coarser temporal resolution affects prediction at all, while Experiment 2A tests whether the size of that effect depends on how far into the future the outcome is predicted.</p>
 <h3 id="Experimental-Design">Experimental Design<a class="anchor-link" href="#Experimental-Design">¶</a></h3><p>Model: LSTM.</p>
-<p>Task: fixed-horizon ICU outcome from the source notebook.</p>
+<p>Task: fixed-horizon ICU exit. Using the first 24h of ICU data, the positive label indicates that the patient's remaining ICU length of stay is at most the prediction horizon.</p>
 <p>Prediction time: 24h after ICU admission.</p>
 <p>Prediction horizons: 12h, 24h, 48h, 96h, and 168h when available.</p>
-<p>Temporal resolution varies across available source timesteps.</p>
-<p>Training and test observation regimes match the resolution being evaluated. Checkpoints are selected by validation AUPRC.</p>
-<h3 id="Quantity-Being-Measured">Quantity Being Measured<a class="anchor-link" href="#Quantity-Being-Measured">¶</a></h3><p>Absolute performance is <code>M(h,r,s)</code>. Degradation is <code>Delta(h,r,s) = M(h,1h,s) - M(h,r,s)</code>, computed within seed.</p>
-<p>Positive degradation means the coarser resolution performed worse than 1h for that horizon. For Brier bootstrap contrasts, the source reverses the raw lower-is-better metric so positive still means the 1h/reference condition is better.</p>
+<p>Input representation varies between a raw event sequence without explicit timestamp features and regular grids at 1h, 2h, 4h, 8h, 12h, and 24h.</p>
+<p>Training and test representations match within each condition. Checkpoints are selected by validation AUPRC.</p>
+<h3 id="Quantity-Being-Measured">Quantity Being Measured<a class="anchor-link" href="#Quantity-Being-Measured">¶</a></h3><p>Absolute performance is <code>M(h,c,s)</code>. The 1h-reference contrast is <code>Delta(h,c,s) = M(h,1h,s) - M(h,c,s)</code>, computed within seed.</p>
+<p>Positive values mean the comparison condition performed worse than 1h for that horizon. For regular grids this is degradation under coarser resolution; the raw row is a representation comparison. For Brier bootstrap contrasts, the source reverses the raw lower-is-better metric so positive still means the 1h/reference condition is better.</p>
 <h3 id="Why-This-Comparison-Is-Informative">Why This Comparison Is Informative<a class="anchor-link" href="#Why-This-Comparison-Is-Informative">¶</a></h3><p>It asks whether temporal detail is especially important for near-term prediction rather than equally important across all horizons.</p>
 <h3 id="Expected-Evidence">Expected Evidence<a class="anchor-link" href="#Expected-Evidence">¶</a></h3><p>If short-horizon prediction depends more on fine temporal information, degradation should be larger at 12h than at longer horizons. If the effect is horizon-independent, degradation should be similar across horizons. Non-monotonic patterns should be displayed.</p>
 <h3 id="Caveats">Caveats<a class="anchor-link" href="#Caveats">¶</a></h3><p>Raw AUPRC cannot be compared directly across horizons because outcome prevalence changes. Across-seed CIs and paired patient-bootstrap CIs are different uncertainty estimates.</p>
@@ -8544,7 +8533,7 @@ Exp1 source figure: Decompensation (bs=320) degradation relative to 1h
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<p><strong>Validation/test performance guide:</strong> These tables and plots show absolute AUPRC/AUROC by horizon and temporal resolution. Values are source-computed means across model seeds with Student-t CIs. <code>n</code> is the number of model seeds contributing to each point. Points with fewer than the planned five seeds are still shown and should be interpreted as partial results. Raw AUPRC across horizons reflects different prevalence and should be interpreted cautiously.</p>
+<p><strong>Validation/test performance guide:</strong> These tables and plots show absolute AUPRC/AUROC by horizon and input condition: raw event sequence plus the regular-grid resolutions. Values are source-computed means across model seeds with Student-t CIs. <code>n</code> is the number of model seeds contributing to each point. Points with fewer than the planned five seeds are still shown and should be interpreted as partial results. AUPRC across horizons reflects different prevalence and should be interpreted cautiously.</p>
 </div>
 </div>
 </div>
@@ -8624,7 +8613,7 @@ experiment2a_test_absolute_performance_ci95.png
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<p><strong>Degradation and bootstrap guide:</strong> Degradation summaries show <code>1h - coarse</code> with Student-t CIs across seeds. The patient-bootstrap tables come from paired test predictions and include patient-level bootstrap CIs. Positive values mean the 1h/reference condition performed better; for Brier, positive means lower Brier for the reference.</p>
+<p><strong>1h-reference contrast and bootstrap guide:</strong> Summaries show <code>1h - comparison condition</code> with Student-t CIs across seeds; regular-grid comparisons quantify coarsening, while the raw comparison quantifies representation choice. The patient-bootstrap tables come from paired test predictions and include patient-level bootstrap CIs. Positive values mean the 1h/reference condition performed better; for Brier, positive means lower Brier for the reference.</p>
 </div>
 </div>
 </div>
@@ -8707,8 +8696,8 @@ experiment2a_test_degradation_ci95.png
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="3-4.-Experiment-2B/C---Why-Does-Frequency-Matter,-And-Does-The-Mechanism-Depend-On-Severity?">3-4. Experiment 2B/C - Why Does Frequency Matter, And Does The Mechanism Depend On Severity?<a class="anchor-link" href="#3-4.-Experiment-2B/C---Why-Does-Frequency-Matter,-And-Does-The-Mechanism-Depend-On-Severity?">¶</a></h2><h3 id="Scientific-Question">Scientific Question<a class="anchor-link" href="#Scientific-Question">¶</a></h3><p>Which parts of the frequency effect are associated with observation loss, temporal placement, and representation/grid changes? Does that mechanism change as thinning becomes more severe?</p>
-<h3 id="Experimental-Design">Experimental Design<a class="anchor-link" href="#Experimental-Design">¶</a></h3><p>Model: LSTM. Task: fixed-horizon ICU outcome. Prediction time and horizons follow the source notebook. Conditions are preserved exactly from the source:</p>
+<h2 id="3.-Experiment-2B---Why-Does-Frequency-Matter?">3. Experiment 2B - Why Does Frequency Matter?<a class="anchor-link" href="#3.-Experiment-2B---Why-Does-Frequency-Matter?">¶</a></h2><h3 id="Scientific-Question">Scientific Question<a class="anchor-link" href="#Scientific-Question">¶</a></h3><p>At the implemented 4h thinning interval, which parts of the frequency effect are associated with observation loss, temporal placement, and representation/grid changes?</p>
+<h3 id="Experimental-Design">Experimental Design<a class="anchor-link" href="#Experimental-Design">¶</a></h3><p>Model: LSTM. Task: fixed-horizon ICU exit from a 24h input window, with horizons 12h, 24h, 48h, 96h, and 168h. The active source configuration uses <code>r=4</code>; conditions are preserved exactly from the source:</p>
 <ul>
 <li>A: native observations represented on the standard 1h grid.</li>
 <li>B: structured r-hour measurement selection/thinning; retained observations keep original timestamps and are represented on the downstream 1h grid.</li>
@@ -8795,8 +8784,8 @@ experiment2a_test_degradation_ci95.png
 </tbody>
 </table>
 <h3 id="Why-This-Comparison-Is-Informative">Why This Comparison Is Informative<a class="anchor-link" href="#Why-This-Comparison-Is-Informative">¶</a></h3><p>A-vs-B isolates structured observation removal relative to native observations. B-vs-C asks whether temporal pattern matters after matching observation count. B-vs-D asks whether the coarse representation/grid changes performance beyond sparse observation selection. A-vs-D reports the total native-1h versus r-hour-grid difference.</p>
-<h3 id="Expected-Evidence">Expected Evidence<a class="anchor-link" href="#Expected-Evidence">¶</a></h3><p>Increasing A-B with <code>r</code> suggests stronger information loss at lower observation frequency. Increasing B-C suggests temporal structure matters more with stronger thinning. Increasing B-D suggests representation/grid choice matters more. Flat curves suggest relative insensitivity to severity.</p>
-<h3 id="Caveats">Caveats<a class="anchor-link" href="#Caveats">¶</a></h3><p>A/B/C/D are not an additive causal decomposition. B-vs-D is not a pure sequence-length contrast. Use only available <code>r</code> values; do not fabricate missing severities.</p>
+<h3 id="Expected-Evidence">Expected Evidence<a class="anchor-link" href="#Expected-Evidence">¶</a></h3><p>At <code>r=4</code>, non-zero A-B, B-C, or B-D contrasts support the corresponding mechanism interpretation. Comparing how those effects change with severity requires additional configured <code>r</code> values and is not answered by the current run set.</p>
+<h3 id="Caveats">Caveats<a class="anchor-link" href="#Caveats">¶</a></h3><p>A/B/C/D are not an additive causal decomposition. B-vs-D is not a pure sequence-length contrast. The code supports an Exp2C extension at other <code>r</code> values, but the current source configuration contains only <code>r=4</code>.</p>
 </div>
 </div>
 </div>
@@ -8818,18 +8807,7 @@ experiment2a_test_degradation_ci95.png
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<p><strong>Exp2B/C input-information characterization:</strong> Structured thinning is introduced here at <code>r=4</code> only. Observed tokens are real <code>(timestamp, variable)</code> values in the first 24h window; occupied 1h bins and observed channels are also based on real observations, not imputed values. The post-discretization sequence length is shown only as a representation sanity check.</p>
-</div>
-</div>
-</div>
-</div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=8530e61b">
-<div class="jp-Cell-inputWrapper" tabindex="0">
-<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
-</div>
-<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
-</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<p>TODO: don't show A-D, be descriptive. contrasts are no good,</p>
+<p><strong>Exp2B input-information characterization:</strong> Structured thinning is implemented here at <code>r=4</code> only. Observed tokens are real <code>(timestamp, variable)</code> values in the first 24h window; occupied 1h bins and observed channels are also based on real observations, not imputed values. The post-discretization sequence length is shown only as a representation sanity check.</p>
 </div>
 </div>
 </div>
@@ -9042,7 +9020,7 @@ experiment2b_r4_brier_primary_contrasts_bootstrap_ci95.png
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<p><strong>Exp2C thinning-severity table:</strong> This is the same A/B/C/D mechanism evaluated across available thinning severities. Increasing effect size with <code>r</code> suggests stronger sensitivity as measurements become less frequent. Flat or non-monotonic results are also valid and should remain visible. Positive means the left condition is better, with Brier sign already oriented appropriately by the source analysis.</p>
+<p><strong>Planned Exp2C thinning-severity table:</strong> The source code can stratify the A/B/C/D mechanism by <code>r</code>, but the active configuration currently includes only <code>r=4</code>. A severity comparison is therefore not available yet; this table becomes inferential only after additional <code>r</code> values are configured and run. Positive means the left condition is better, with Brier sign already oriented appropriately by the source analysis.</p>
 </div>
 </div>
 </div>
@@ -9094,7 +9072,7 @@ NOT AVAILABLE
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
 <h2 id="4.-Regular-grid-frequency-shift-(Exp3A-D)">4. Regular-grid frequency shift (Exp3A-D)<a class="anchor-link" href="#4.-Regular-grid-frequency-shift-(Exp3A-D)">¶</a></h2><p><strong>Question.</strong> How much performance is recovered when LSTM or GRU-D training matches the observation frequency used at deployment on the regular 1h grid?</p>
-<p><strong>Design.</strong> Exp3A compares structured thinning at 4h and 8h for a 12h prediction horizon. Exp3C repeats the 4h comparison with random matched-count thinning, and Exp3D repeats structured 4h thinning at a 96h horizon. Exp3B changes only the normalizer used by the matched 4h model and is reported numerically rather than as another figure.</p>
+<p><strong>Design.</strong> All sub-experiments predict fixed-horizon ICU exit from the first 24h of data. Exp3A compares structured thinning at 4h and 8h for a 12h prediction horizon. Exp3C repeats the 4h comparison with random matched-count thinning using the fixed sampling seed 100, and Exp3D repeats structured 4h thinning at a 96h horizon. Exp3B changes only the normalizer used by the matched 4h model and is reported numerically rather than as another figure.</p>
 <p><strong>Effect orientation.</strong> For AUPRC/AUROC, the plotted effect is <code>matched sparse -&gt; sparse</code> minus <code>dense -&gt; sparse</code>. Positive values favor training under the deployment observation regime. Brier uses the reversed subtraction so positive still means improvement, but Brier remains in the tables and source notebooks rather than these curated figures.</p>
 <p><strong>Uncertainty and completeness.</strong> Error bars use the source-exported uncertainty interval, preferring the paired patient bootstrap when available. Partial seed sets remain visible and must not be treated as final evidence.</p>
 <p>Absolute condition plots, seed diagnostics, and model-specific Exp3A-D figures remain in <code>visualize_exp3_frequency_shift.ipynb</code> and <code>visualize_exp3_grud_frequency_shift.ipynb</code>.</p>
