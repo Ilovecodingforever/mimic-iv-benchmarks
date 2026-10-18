@@ -1,9 +1,13 @@
 from __future__ import absolute_import
 from __future__ import print_function
 
+import csv
 import os
 import numpy as np
 import random
+
+from mimic4benchmark.decompensation import (
+    PREDICTION_TIME, VALID_HORIZONS, mortality_label)
 
 
 class Reader(object):
@@ -222,6 +226,120 @@ class FixedHorizonIcuExitReader(Reader):
                 "y": y,
                 "header": header,
                 "name": name}
+
+
+class FixedHorizonDecompensationReader(Reader):
+    VALID_HORIZONS = VALID_HORIZONS
+    PERIOD_LENGTH = PREDICTION_TIME
+
+    def __init__(self, dataset_dir, listfile=None, horizon=24,
+                 metadata_path=None):
+        """Reader for fixed-time mortality labels from decompensation data.
+
+        Existing decompensation listfiles define the eligible examples and the
+        metadata sidecar supplies the death timing needed for other horizons.
+        """
+        horizon = int(horizon)
+        if horizon not in self.VALID_HORIZONS:
+            raise ValueError("Unsupported horizon {}. Valid horizons are {}.".format(
+                horizon, ", ".join(map(str, self.VALID_HORIZONS))))
+
+        Reader.__init__(self, dataset_dir, listfile)
+        if metadata_path is None:
+            listfile_path = listfile if listfile is not None else os.path.join(
+                dataset_dir, 'listfile.csv')
+            metadata_path = os.path.join(os.path.dirname(listfile_path),
+                                         'mortality_metadata.csv')
+        metadata = self._read_metadata(metadata_path)
+
+        rows = []
+        for line in self._data:
+            if not line.strip():
+                continue
+            fields = line.strip().split(',')
+            if len(fields) != 3:
+                raise ValueError('Expected stay,period_length,y_true in {}'.format(
+                    listfile if listfile is not None else 'listfile.csv'))
+            name, period_length, source_label = fields
+            period_length = float(period_length)
+            if abs(period_length - self.PERIOD_LENGTH) >= 1e-6:
+                continue
+            if name not in metadata:
+                raise ValueError('Missing mortality metadata for {}'.format(name))
+            row = metadata[name]
+            if row['lived_time'] + 1e-6 < self.PERIOD_LENGTH:
+                raise ValueError('{} is not eligible at the 24h prediction time'.format(name))
+            label_24h = mortality_label(
+                row['mortality'], row['lived_time'], self.PERIOD_LENGTH, 24)
+            if int(source_label) != label_24h or int(row['label_24h']) != label_24h:
+                raise ValueError('24h label mismatch for {}'.format(name))
+            label = mortality_label(
+                row['mortality'], row['lived_time'], self.PERIOD_LENGTH, horizon)
+            rows.append((name, row['lived_time'], label))
+
+        names = [row[0] for row in rows]
+        if len(names) != len(set(names)):
+            raise ValueError('Duplicate stay found after filtering to 24h in {}'.format(
+                listfile if listfile is not None else os.path.join(dataset_dir, 'listfile.csv')))
+        self._horizon = horizon
+        self._metadata = metadata
+        self._data = rows
+
+    @staticmethod
+    def _read_metadata(metadata_path):
+        required = {'stay', 'mortality', 'lived_time', 'label_24h'}
+        metadata = {}
+        with open(metadata_path, 'r') as metadata_file:
+            for row in csv.DictReader(metadata_file):
+                if not required.issubset(set(row)):
+                    raise ValueError('Mortality metadata is missing required columns: {}'.format(
+                        sorted(required)))
+                name = row['stay']
+                if name in metadata:
+                    raise ValueError('Duplicate mortality metadata for {}'.format(name))
+                metadata[name] = {
+                    'mortality': int(row['mortality']),
+                    'lived_time': float(row['lived_time']),
+                    'label_24h': int(row['label_24h']),
+                }
+        return metadata
+
+    def get_stay_names(self):
+        return [row[0] for row in self._data]
+
+    def get_lived_times(self):
+        return [row[1] for row in self._data]
+
+    def get_labels(self):
+        return [row[2] for row in self._data]
+
+    def _read_timeseries(self, ts_filename, time_bound):
+        ret = []
+        with open(os.path.join(self._dataset_dir, ts_filename), 'r') as tsfile:
+            header = tsfile.readline().strip().split(',')
+            assert header[0] == 'Hours'
+            for line in tsfile:
+                mas = line.strip().split(',')
+                t = float(mas[0])
+                if t > time_bound + 1e-9:
+                    break
+                ret.append(np.array(mas))
+        if not ret:
+            raise ValueError('No measurements at or before {}h for {}'.format(
+                time_bound, ts_filename))
+        return np.stack(ret), header
+
+    def read_example(self, index):
+        if index < 0 or index >= len(self._data):
+            raise ValueError('Index must be from 0 (inclusive) to number of examples (exclusive).')
+        name = self._data[index][0]
+        y = self._data[index][2]
+        X, header = self._read_timeseries(name, self.PERIOD_LENGTH)
+        return {'X': X,
+                't': self.PERIOD_LENGTH,
+                'y': y,
+                'header': header,
+                'name': name}
 
 
 class LengthOfStayReader(Reader):

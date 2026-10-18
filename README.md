@@ -289,6 +289,65 @@ done
 
 
 
+## Fixed-horizon decompensation mortality / Experiment 2A
+
+`fixed_horizon_decompensation` reuses the existing `data/decompensation` time series and listfiles. A small
+`mortality_metadata.csv` sidecar stores the mortality timing needed to derive the 12, 24, 48, 96, and 168 hour
+labels. A fresh run of `create_decompensation` writes this sidecar; for an existing dataset, create it without
+rewriting time series:
+
+```bash
+python -m mimic4benchmark.scripts.create_decompensation \
+  /path/to/preprocessed/root /path/to/data/decompensation --metadata-only
+```
+
+After `split_train_val.py` has produced the split listfiles, create normalizers in one shared directory:
+
+```bash
+DATA=/path/to/data/decompensation
+NORM=/path/to/normalizers
+
+for ts in 0 1 2 4 8 12 24; do
+  python -m mimic4models.create_normalizer_state \
+    --task fixed_horizon_decompensation --data "$DATA" \
+    --metadata_path "$DATA/mortality_metadata.csv" --horizon 24 \
+    --timestep "$ts" --start_time zero --output_dir "$NORM"
+done
+```
+
+Train the regular-grid LSTM for each horizon, interval, and seed. Use the raw LSTM with `--timestep 0` for the
+irregular-input condition (and the corresponding raw normalizer):
+
+```bash
+OUT=/path/to/results/fixed_horizon_decompensation
+for seed in 0 1 2 3 4; do
+  for horizon in 12 24 48 96 168; do
+    for ts in 1 2 4 8 12 24; do
+      python -m mimic4models.fixed_horizon_decompensation.main \
+        --network mimic4models/keras_models/lstm.py --dim 16 --depth 2 --dropout 0.3 \
+        --mode train --batch_size 8 --horizon "$horizon" --seed "$seed" \
+        --data "$DATA" --metadata_path "$DATA/mortality_metadata.csv" \
+        --normalizer_dir "$NORM" --output_dir "$OUT/${horizon}h" --timestep "$ts"
+    done
+  done
+done
+```
+
+For the raw/irregular condition, use the same loop with `--timestep 0` and
+`--network mimic4models/keras_models/raw_lstm.py`:
+
+```bash
+python -m mimic4models.fixed_horizon_decompensation.main \
+  --network mimic4models/keras_models/raw_lstm.py --dim 16 --depth 2 --dropout 0.3 \
+  --mode train --batch_size 8 --horizon 24 --seed 0 --timestep 0 \
+  --data "$DATA" --metadata_path "$DATA/mortality_metadata.csv" \
+  --normalizer_dir "$NORM" --output_dir "$OUT/24h"
+```
+
+Test inference uses the same command with `--mode test` and the selected checkpoint via `--load_state`. The
+visualizer defaults to ICU exit; run it with `EXP2A_TASK=fixed_horizon_decompensation` to analyze these outputs.
+
+
 ## Readers
 To simplify the reading of benchmark data we wrote special classes.
 The `mimic4benchmark/readers.py` contains class `Reader` and five other task-specific classes derived from it.

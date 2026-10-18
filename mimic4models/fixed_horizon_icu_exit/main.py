@@ -54,28 +54,29 @@ def validate_data(data_dir):
 
 def default_normalizer_state_path(normalizer_dir, timestep, imputation, n_examples,
                                   sampling_strategy='none', sampling_interval=None,
-                                  sampling_seed=DEFAULT_SAMPLING_SEED):
+                                  sampling_seed=DEFAULT_SAMPLING_SEED,
+                                  task_name='fixed_horizon_icu_exit'):
     if is_raw_timestep(timestep):
         if sampling_strategy == 'none':
-            file_name = 'fixed_horizon_icu_exit_raw_ts:0.00_observed_only_n:{}.normalizer'.format(
-                n_examples)
+            file_name = '{}_raw_ts:0.00_observed_only_n:{}.normalizer'.format(
+                task_name, n_examples)
         else:
             seed_part = ''
             if sampling_strategy == 'random_matched':
                 seed_part = '_seed:{}'.format(sampling_seed)
-            file_name = ('fixed_horizon_icu_exit_raw_sampling:{}_r:{}{}'
+            file_name = ('{}_raw_sampling:{}_r:{}{}'
                          '_ts:0.00_observed_only_n:{}.normalizer').format(
-                             sampling_strategy, int(sampling_interval), seed_part, n_examples)
+                             task_name, sampling_strategy, int(sampling_interval), seed_part, n_examples)
     elif sampling_strategy == 'none':
-        file_name = 'fixed_horizon_icu_exit_ts:{:.2f}_impute:{}_start:zero_masks:True_n:{}.normalizer'.format(
-            timestep, imputation, n_examples)
+        file_name = '{}_ts:{:.2f}_impute:{}_start:zero_masks:True_n:{}.normalizer'.format(
+            task_name, timestep, imputation, n_examples)
     else:
         seed_part = ''
         if sampling_strategy == 'random_matched':
             seed_part = '_seed:{}'.format(sampling_seed)
-        file_name = ('fixed_horizon_icu_exit_sampling:{}_r:{}{}_ts:{:.2f}'
+        file_name = ('{}_sampling:{}_r:{}{}_ts:{:.2f}'
                      '_impute:{}_start:zero_masks:True_n:{}.normalizer').format(
-                         sampling_strategy, int(sampling_interval), seed_part,
+                         task_name, sampling_strategy, int(sampling_interval), seed_part,
                          timestep, imputation, n_examples)
     return os.path.join(normalizer_dir, file_name)
 

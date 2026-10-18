@@ -5,6 +5,7 @@ from mimic4benchmark.readers import InHospitalMortalityReader
 from mimic4benchmark.readers import DecompensationReader
 from mimic4benchmark.readers import LengthOfStayReader
 from mimic4benchmark.readers import FixedHorizonIcuExitReader
+from mimic4benchmark.readers import FixedHorizonDecompensationReader
 from mimic4benchmark.readers import PhenotypingReader
 from mimic4benchmark.readers import MultitaskReader
 from mimic4models.preprocessing import Discretizer, Normalizer
@@ -27,8 +28,10 @@ def validate_normalizer_args(args):
     if args.task == 'fixed_horizon_icu_exit' and not args.store_masks:
         raise ValueError('fixed_horizon_icu_exit normalizers require masks because the training '
                          'pipeline uses store_masks=True and the filename convention assumes masks:True')
-    if is_raw_timestep(args.timestep) and args.task not in ('fixed_horizon_icu_exit', 'ihm', 'decomp'):
-        raise ValueError('--timestep 0 raw mode is implemented only for ihm, decomp, and fixed_horizon_icu_exit')
+    if is_raw_timestep(args.timestep) and args.task not in (
+            'fixed_horizon_icu_exit', 'fixed_horizon_decompensation', 'ihm', 'decomp'):
+        raise ValueError('--timestep 0 raw mode is implemented only for ihm, decomp, '
+                         'fixed_horizon_icu_exit, and fixed_horizon_decompensation')
 
 
 def main():
@@ -37,7 +40,8 @@ def main():
                                                  'discretizer, which are later used to standardize the input of '
                                                  'neural models.')
     parser.add_argument('--task', type=str, required=True,
-                        choices=['ihm', 'decomp', 'los', 'fixed_horizon_icu_exit', 'pheno', 'multi'])
+                        choices=['ihm', 'decomp', 'los', 'fixed_horizon_icu_exit',
+                                 'fixed_horizon_decompensation', 'pheno', 'multi'])
     parser.add_argument('--timestep', type=float, default=1.0,
                         help="Rate of the re-sampling to discretize time-series.")
     parser.add_argument('--impute_strategy', type=str, default='previous',
@@ -58,6 +62,8 @@ def main():
     parser.add_argument('--horizon', type=int, default=24,
                         choices=FixedHorizonIcuExitReader.VALID_HORIZONS,
                         help='Fixed-horizon ICU-exit horizon for reader construction.')
+    parser.add_argument('--metadata_path', type=str, default=None,
+                        help='Mortality metadata sidecar for fixed_horizon_decompensation.')
     parser.add_argument('--sampling_strategy', type=str, default='none',
                         choices=['none', 'structured', 'random_matched'],
                         help='Matched-count sampling intervention for fixed_horizon_icu_exit.')
@@ -96,6 +102,13 @@ def main():
         reader = FixedHorizonIcuExitReader(dataset_dir=dataset_dir,
                                            listfile=train_listfile,
                                            horizon=args.horizon)
+    if args.task == 'fixed_horizon_decompensation':
+        metadata_path = args.metadata_path
+        if metadata_path is None:
+            metadata_path = os.path.join(args.data, 'mortality_metadata.csv')
+        reader = FixedHorizonDecompensationReader(
+            dataset_dir=dataset_dir, listfile=train_listfile,
+            horizon=args.horizon, metadata_path=metadata_path)
     if args.task == 'pheno':
         reader = PhenotypingReader(dataset_dir=dataset_dir,
                                    listfile=train_listfile)
@@ -143,6 +156,10 @@ def main():
         file_name = default_normalizer_state_path(
             args.output_dir, args.timestep, args.impute_strategy, n_samples,
             args.sampling_strategy, args.sampling_interval, args.sampling_seed)
+    elif args.task == 'fixed_horizon_decompensation':
+        file_name = default_normalizer_state_path(
+            args.output_dir, args.timestep, args.impute_strategy, n_samples,
+            task_name='fixed_horizon_decompensation')
     elif args.task == 'ihm' and raw_mode:
         file_name = os.path.join(
             args.output_dir,
