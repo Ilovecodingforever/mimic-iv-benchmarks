@@ -1,8 +1,6 @@
 #!/usr/bin/env python
 """Export full and figures-focused summary HTML from one notebook execution."""
 
-from __future__ import annotations
-
 import argparse
 import copy
 import os
