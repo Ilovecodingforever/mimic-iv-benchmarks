@@ -290,12 +290,12 @@ DATA=/heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/m
 NORM=/heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers
 OUT=/heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/length-of-stay
 for seed in 0 1 2 3 4; do
-    for ts in 1 2; do
+    for ts in 1 2 4 8 12 24; do
         python -m mimic4models.length_of_stay.main \
         --network mimic4models/keras_models/lstm.py --dim 16 --depth 2 --dropout 0.3 \
         --mode train --batch_size 320 --seed "$seed" \
         --data "$DATA" --epochs 100 \
-        --normalizer_dir "$NORM" --output_dir "$OUT/${horizon}h" --timestep "$ts" \
+        --normalizer_dir "$NORM" --output_dir "$OUT/${ts}h" --timestep "$ts" \
         --partition custom
     done
 done

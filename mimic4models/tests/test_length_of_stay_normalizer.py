@@ -15,15 +15,26 @@ def load_normalizer_helpers():
     tree.body = [
         node for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name in (
-            'los_normalizer_pattern', 'resolve_normalizer_state')
+            'batches_for_epoch_budget', 'los_normalizer_pattern',
+            'resolve_normalizer_state')
     ]
     namespace = {'glob': glob, 'os': os, '__file__': path}
     exec(compile(tree, path, 'exec'), namespace)
-    return namespace['los_normalizer_pattern'], namespace['resolve_normalizer_state']
+    return (namespace['batches_for_epoch_budget'],
+            namespace['los_normalizer_pattern'],
+            namespace['resolve_normalizer_state'])
 
 
 def test_length_of_stay_normalizer_dir_resolution():
-    pattern, resolve = load_normalizer_helpers()
+    batches, pattern, resolve = load_normalizer_helpers()
+    assert batches(16000, 320, 'training') == 50
+    assert batches(8000, 320, 'validation') == 25
+    try:
+        batches(16000, 0, 'training')
+    except ValueError as exc:
+        assert 'batch_size must be positive' in str(exc)
+    else:
+        raise AssertionError('non-positive batch size did not fail')
     root = tempfile.mkdtemp()
     try:
         normalizer_dir = os.path.join(root, 'normalizers')

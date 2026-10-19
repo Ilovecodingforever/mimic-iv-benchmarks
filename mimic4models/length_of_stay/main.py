@@ -20,6 +20,20 @@ from mimic4models import common_utils
 from keras.callbacks import ModelCheckpoint, CSVLogger
 
 
+TRAIN_EXAMPLES_PER_EPOCH = 16000
+VAL_EXAMPLES_PER_EPOCH = 8000
+
+
+def batches_for_epoch_budget(example_budget, batch_size, split_name):
+    if batch_size <= 0:
+        raise ValueError('batch_size must be positive, got {}'.format(batch_size))
+    if example_budget % batch_size != 0:
+        raise ValueError(
+            '{} examples per epoch ({}) must be divisible by batch_size ({})'.format(
+                split_name, example_budget, batch_size))
+    return example_budget // batch_size
+
+
 def los_normalizer_pattern(normalizer_dir, timestep, imputation):
     return os.path.join(
         normalizer_dir,
@@ -164,11 +178,15 @@ if args.deep_supervision:
                                                  discretizer, normalizer, args.batch_size, shuffle=False)
 else:
     # Set number of batches in one epoch
-    train_nbatches = 2000
-    val_nbatches = 1000
+    train_nbatches = batches_for_epoch_budget(TRAIN_EXAMPLES_PER_EPOCH,
+                                              args.batch_size,
+                                              'training')
+    val_nbatches = batches_for_epoch_budget(VAL_EXAMPLES_PER_EPOCH,
+                                            args.batch_size,
+                                            'validation')
     if args.small_part:
-        train_nbatches = 20
-        val_nbatches = 20
+        train_nbatches = 40
+        val_nbatches = 40
 
     train_data_gen = utils.BatchGen(reader=train_reader,
                                     discretizer=discretizer,
