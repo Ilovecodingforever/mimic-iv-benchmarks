@@ -148,18 +148,19 @@ python -m mimic4models.create_normalizer_state \
 done
 
 
-for ts in 24.0; do
-python -m mimic4models.create_normalizer_state \
-  --task decomp \
-  --timestep "$ts" \
-  --impute_strategy previous \
-  --start_time zero \
-  --store_masks \
-  --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/decompensation/ \
-  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers/ \
-  --n_samples 100000
-done
+DATA_ROOT="/heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo"
 
+for ts in 1 2 4 8 12 24; do
+  python -m mimic4models.create_normalizer_state \
+    --task los \
+    --n_samples 100000 \
+    --timestep "$ts" \
+    --impute_strategy previous \
+    --start_time zero \
+    --store_masks \
+    --data "$DATA_ROOT/data/length-of-stay/" \
+    --output_dir "$DATA_ROOT/normalizers/"
+done
 
 
 
@@ -285,11 +286,68 @@ done
 
 
 
+DATA=/heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay
+NORM=/heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers
+OUT=/heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/length-of-stay
+for seed in 0 1 2 3 4; do
+    for ts in 1 2; do
+        python -m mimic4models.length_of_stay.main \
+        --network mimic4models/keras_models/lstm.py --dim 16 --depth 2 --dropout 0.3 \
+        --mode train --batch_size 320 --seed "$seed" \
+        --data "$DATA" --epochs 100 \
+        --normalizer_dir "$NORM" --output_dir "$OUT/${horizon}h" --timestep "$ts" \
+        --partition custom
+    done
+done
+
 
 
 
 
 ## Fixed-horizon decompensation mortality / Experiment 2A
+
+### Fixed-horizon decompensation
+
+`fixed_horizon_decompensation` extends the original decompensation benchmark to investigate how measurement frequency affects mortality prediction across different prediction horizons. It follows the same experimental design as `fixed_horizon_icu_exit`.
+
+**Task definition:**
+- **Input:** ICU measurements collected during the first 24 hours after ICU admission.
+- **Prediction time:** Fixed at 24 hours after ICU admission.
+- **Prediction horizons:** 12, 24, 48, 96, and 168 hours after the prediction time.
+- **Outcome:** Whether the patient dies within the specified horizon, using the original decompensation benchmark's in-hospital mortality definition.
+- **Eligible patients:** Patients alive and still in the ICU at the 24-hour prediction time.
+
+Unlike the original decompensation benchmark, which generates predictions every hour after the first four hours until ICU discharge or death, this task makes **one prediction per eligible ICU stay at 24 hours**.
+
+**Label generation**
+
+The task reuses the original decompensation dataset and its mortality definition. The preprocessing script `mimic4benchmark/scripts/create_decompensation.py` generates `mortality_metadata.csv`, which stores mortality information and death timing for each ICU stay.
+
+For a prediction horizon \(h\), the label is:
+
+\[
+y_h =
+\begin{cases}
+1 & \text{if mortality}=1 \text{ and } T_{\text{death}}-24<h\\
+0 & \text{otherwise}
+\end{cases}
+\]
+
+where \(T_{\text{death}}\) is the time from ICU admission to death, in hours. The strict inequality follows the original decompensation implementation.
+
+`FixedHorizonDecompensationReader` selects the 24-hour prediction examples from the existing decompensation listfiles and generates horizon-specific labels using the mortality metadata. The input window and eligible cohort remain identical across horizons.
+
+**Implementation and experiments**
+
+The task is implemented in `mimic4models/fixed_horizon_decompensation/` and reuses the training and preprocessing utilities from `fixed_horizon_icu_exit`.
+
+Experiment 2A evaluates measurement intervals of raw/irregular, 1, 2, 4, 8, 12, and 24 hours across all five prediction horizons, using LSTM models.
+
+Results are stored under `results/fixed_horizon_decompensation/`.
+
+The existing `visualizers/visualize_exp2a_horizon.ipynb` supports both `fixed_horizon_icu_exit` and `fixed_horizon_decompensation` through the `EXP2A_TASK` configuration. It reports validation/test AUROC and AUPRC, performance degradation relative to 1-hour resolution, and uncertainty estimates across model seeds and patients.
+
+
 
 `fixed_horizon_decompensation` reuses the existing `data/decompensation` time series and listfiles. A small
 `mortality_metadata.csv` sidecar stores the mortality timing needed to derive the 12, 24, 48, 96, and 168 hour
@@ -298,14 +356,14 @@ rewriting time series:
 
 ```bash
 python -m mimic4benchmark.scripts.create_decompensation \
-  /path/to/preprocessed/root /path/to/data/decompensation --metadata-only
+  /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/root/ /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/decompensation --metadata-only
 ```
 
 After `split_train_val.py` has produced the split listfiles, create normalizers in one shared directory:
 
 ```bash
-DATA=/path/to/data/decompensation
-NORM=/path/to/normalizers
+DATA=/heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/decompensation
+NORM=/heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers
 
 for ts in 0 1 2 4 8 12 24; do
   python -m mimic4models.create_normalizer_state \
@@ -319,13 +377,15 @@ Train the regular-grid LSTM for each horizon, interval, and seed. Use the raw LS
 irregular-input condition (and the corresponding raw normalizer):
 
 ```bash
-OUT=/path/to/results/fixed_horizon_decompensation
+DATA=/heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/decompensation
+NORM=/heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers
+OUT=/heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/fixed_horizon_decompensation
 for seed in 0 1 2 3 4; do
   for horizon in 12 24 48 96 168; do
     for ts in 1 2 4 8 12 24; do
       python -m mimic4models.fixed_horizon_decompensation.main \
         --network mimic4models/keras_models/lstm.py --dim 16 --depth 2 --dropout 0.3 \
-        --mode train --batch_size 8 --horizon "$horizon" --seed "$seed" \
+        --mode train --batch_size 320 --horizon "$horizon" --seed "$seed" \
         --data "$DATA" --metadata_path "$DATA/mortality_metadata.csv" \
         --normalizer_dir "$NORM" --output_dir "$OUT/${horizon}h" --timestep "$ts"
     done
@@ -333,16 +393,31 @@ for seed in 0 1 2 3 4; do
 done
 ```
 
+
+
+
 For the raw/irregular condition, use the same loop with `--timestep 0` and
 `--network mimic4models/keras_models/raw_lstm.py`:
 
 ```bash
 python -m mimic4models.fixed_horizon_decompensation.main \
   --network mimic4models/keras_models/raw_lstm.py --dim 16 --depth 2 --dropout 0.3 \
-  --mode train --batch_size 8 --horizon 24 --seed 0 --timestep 0 \
+  --mode train --batch_size 320 --horizon 24 --seed 0 --timestep 0 \
   --data "$DATA" --metadata_path "$DATA/mortality_metadata.csv" \
   --normalizer_dir "$NORM" --output_dir "$OUT/24h"
 ```
+
+
+for seed in 0 1 2 3 4; do
+  for horizon in 12 24 48 96 168; do
+      python -m mimic4models.fixed_horizon_decompensation.main \
+        --network mimic4models/keras_models/raw_lstm.py --dim 16 --depth 2 --dropout 0.3 \
+        --mode train --batch_size 320 --horizon "$horizon" --seed "$seed" \
+        --data "$DATA" --metadata_path "$DATA/mortality_metadata.csv" \
+        --normalizer_dir "$NORM" --output_dir "$OUT/${horizon}h" --timestep 0
+  done
+done
+
 
 Test inference uses the same command with `--mode test` and the selected checkpoint via `--load_state`. The
 visualizer defaults to ICU exit; run it with `EXP2A_TASK=fixed_horizon_decompensation` to analyze these outputs.

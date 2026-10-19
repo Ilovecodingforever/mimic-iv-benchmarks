@@ -2,6 +2,7 @@ from __future__ import absolute_import
 from __future__ import print_function
 
 import re
+from copy import copy
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -39,6 +40,69 @@ def show_table(title, df, max_rows=80):
             print("... {} more rows".format(len(df) - max_rows))
     else:
         print(view.to_string(index=False))
+
+
+def summarize_reader_labels(reader, require_unique_stays=False):
+    """Return label counts and sample/stay names without reading time series."""
+    if hasattr(reader, "get_labels"):
+        labels = list(reader.get_labels())
+    elif hasattr(reader, "_data"):
+        labels = [row[-1] for row in reader._data]
+    else:
+        raise AttributeError("Reader does not expose ground-truth labels")
+
+    if hasattr(reader, "get_stay_names"):
+        names = list(reader.get_stay_names())
+    elif hasattr(reader, "_data"):
+        names = [row[0] for row in reader._data]
+    else:
+        raise AttributeError("Reader does not expose sample names")
+
+    if len(labels) != len(names):
+        raise ValueError("Reader labels and names have different lengths")
+    labels = np.asarray(labels, dtype=int)
+    if not np.isin(labels, [0, 1]).all():
+        raise ValueError("Reader returned non-binary labels")
+    if require_unique_stays and len(names) != len(set(names)):
+        raise ValueError("Reader returned duplicate ICU stays")
+
+    positive = int(np.count_nonzero(labels == 1))
+    negative = int(np.count_nonzero(labels == 0))
+    total = positive + negative
+    return {
+        "total": total,
+        "positive": positive,
+        "negative": negative,
+        "positive_rate_pct": 100.0 * positive / total if total else 0.0,
+        "names": names,
+    }
+
+
+def validate_cohort_statistics(stats, stay_sets=None, horizons=None):
+    """Validate binary counts and, optionally, horizon-wise cohort invariants."""
+    if stats is None or len(stats) == 0:
+        return
+    if not (stats["Positive"] + stats["Negative"] == stats["Total"]).all():
+        raise AssertionError("Positive and negative counts must sum to total")
+    if horizons is None:
+        return
+
+    expected_horizons = set(horizons)
+    for (task, split), group in stats.groupby(["Task", "Split"], observed=True):
+        group = group.sort_values("Horizon (h)")
+        if set(group["Horizon (h)"]) != expected_horizons:
+            continue
+        if group["Total"].nunique() != 1:
+            raise AssertionError("Cohort size changes across horizons for {} {}".format(task, split))
+        if group["Positive"].tolist() != sorted(group["Positive"].tolist()):
+            raise AssertionError("Positive counts are not monotonic for {} {}".format(task, split))
+        if stay_sets is not None:
+            sets = [
+                stay_sets[(task, split, int(horizon))]
+                for horizon in group["Horizon (h)"]
+            ]
+            if any(current != sets[0] for current in sets[1:]):
+                raise AssertionError("Stay cohort changes across horizons for {} {}".format(task, split))
 
 
 def validate_epoch_set(df, expected_epochs=DEFAULT_EXPECTED_EPOCHS):
@@ -181,6 +245,153 @@ def summarize_with_t_ci(df, group_cols, metric):
     return pd.DataFrame(rows).sort_values(group_cols).reset_index(drop=True)
 
 
+
+
+def aggregate_exp2a_absolute_performance(test_runs, metric, horizons, timesteps,
+                                         expected_seeds=5):
+    """Aggregate Exp2A test metrics by horizon and input timestep."""
+    metric_column = metric if metric.startswith("test_") else "test_{}".format(metric)
+    columns = [
+        "metric", "horizon", "timestep", "timestep_label",
+        "mean", "n_seeds", "expected_seeds", "status",
+    ]
+    rows = []
+    test_runs = test_runs if test_runs is not None else pd.DataFrame()
+    for horizon in horizons:
+        for timestep in timesteps:
+            subset = test_runs
+            if len(subset):
+                subset = subset[
+                    (pd.to_numeric(subset["horizon"], errors="coerce") == int(horizon)) &
+                    (pd.to_numeric(subset["timestep"], errors="coerce") == float(timestep))
+                ]
+                if metric_column in subset.columns:
+                    values = pd.to_numeric(subset[metric_column], errors="coerce")
+                else:
+                    values = pd.Series(np.nan, index=subset.index)
+                valid = subset.loc[values.notna()].copy()
+                if "seed" in valid.columns and len(valid):
+                    if valid["seed"].duplicated().any():
+                        raise ValueError(
+                            "Duplicate seed for Exp2A {} horizon {} timestep {}".format(
+                                metric, horizon, timestep))
+                    n_seeds = int(valid["seed"].nunique())
+                else:
+                    n_seeds = int(len(valid))
+                mean = float(values[values.notna()].mean()) if n_seeds else np.nan
+            else:
+                n_seeds = 0
+                mean = np.nan
+            status = (
+                "NOT AVAILABLE" if n_seeds == 0 else
+                "PARTIAL" if n_seeds < expected_seeds else "COMPLETE"
+            )
+            timestep_label = (
+                "Raw/irregular" if abs(float(timestep)) <= 1e-8
+                else "{}h".format(int(float(timestep)))
+            )
+            rows.append({
+                "metric": metric.replace("test_", ""),
+                "horizon": int(horizon),
+                "timestep": float(timestep),
+                "timestep_label": timestep_label,
+                "mean": mean,
+                "n_seeds": n_seeds,
+                "expected_seeds": int(expected_seeds),
+                "status": status,
+            })
+    return pd.DataFrame(rows, columns=columns)
+
+
+def plot_exp2a_absolute_heatmaps(tables_by_task, metric, horizons, timesteps,
+                                 task_labels=None, output_path=None, show=True):
+    """Plot side-by-side absolute Exp2A heatmaps with one shared color scale."""
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import Normalize
+    from pathlib import Path
+
+    task_labels = task_labels or {task: task for task in tables_by_task}
+    task_order = list(task_labels)
+    values = []
+    for task in task_order:
+        table = tables_by_task.get(task)
+        if table is not None and len(table) and "mean" in table:
+            values.extend(pd.to_numeric(table["mean"], errors="coerce").dropna().tolist())
+    if values:
+        vmin, vmax = float(np.min(values)), float(np.max(values))
+        if vmin == vmax:
+            padding = max(abs(vmin) * 0.05, 0.01)
+            vmin, vmax = vmin - padding, vmax + padding
+    else:
+        vmin, vmax = 0.0, 1.0
+
+    cmap = copy(plt.get_cmap("viridis"))
+    cmap.set_bad("lightgray")
+    norm = Normalize(vmin=vmin, vmax=vmax)
+    fig, axes = plt.subplots(1, len(task_order), figsize=(13, 5.5), squeeze=False)
+    axes = axes[0]
+    images = []
+    timestep_values = [float(value) for value in timesteps]
+    x_labels = [
+        "Raw/irregular" if abs(value) <= 1e-8 else "{}h".format(int(value))
+        for value in timestep_values
+    ]
+    y_labels = ["{}h".format(int(horizon)) for horizon in horizons]
+
+    for ax, task in zip(axes, task_order):
+        table = tables_by_task.get(task)
+        matrix = np.full((len(horizons), len(timesteps)), np.nan, dtype=float)
+        seed_matrix = np.zeros(matrix.shape, dtype=int)
+        expected_seed_count = 5
+        if table is not None and len(table):
+            expected_seed_count = int(table["expected_seeds"].max())
+            for row in table.itertuples(index=False):
+                if row.horizon in horizons and float(row.timestep) in timestep_values:
+                    y = horizons.index(int(row.horizon))
+                    x = timestep_values.index(float(row.timestep))
+                    matrix[y, x] = row.mean
+                    seed_matrix[y, x] = int(row.n_seeds)
+        image = ax.imshow(np.ma.masked_invalid(matrix), cmap=cmap, norm=norm, aspect="auto")
+        images.append(image)
+        ax.set_title(task_labels.get(task, task))
+        ax.set_xlabel("Measurement interval")
+        ax.set_ylabel("Prediction horizon")
+        ax.set_xticks(range(len(x_labels)))
+        ax.set_xticklabels(x_labels, rotation=30, ha="right")
+        ax.set_yticks(range(len(y_labels)))
+        ax.set_yticklabels(y_labels)
+        for y in range(matrix.shape[0]):
+            for x in range(matrix.shape[1]):
+                value = matrix[y, x]
+                n_seeds = seed_matrix[y, x]
+                if np.isfinite(value):
+                    label = "{:.3f}".format(value)
+                    if n_seeds < expected_seed_count:
+                        label += "\\n(n={})".format(n_seeds)
+                    text_color = "white" if norm(value) > 0.55 else "black"
+                else:
+                    label, text_color = "N/A", "black"
+                ax.text(x, y, label, ha="center", va="center", color=text_color, fontsize=9)
+
+    fig.suptitle("Experiment 2A test {} absolute performance".format(metric.upper()), y=1.02)
+    bottom = 0.16 if metric.lower() == "auprc" else 0.10
+    if metric.lower() == "auprc":
+        fig.text(
+            0.5, -0.02,
+            "AUPRC is influenced by outcome prevalence, which can vary by prediction horizon.",
+            ha="center", va="top", fontsize=9,
+        )
+    fig.subplots_adjust(left=0.07, right=0.86, bottom=bottom, top=0.88, wspace=0.28)
+    colorbar_axis = fig.add_axes([0.89, bottom, 0.025, 0.78 - bottom])
+    fig.colorbar(images[0], cax=colorbar_axis, label=metric.upper())
+    if output_path is not None:
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(str(output_path), dpi=300, bbox_inches="tight")
+        print("Saved:", output_path)
+    if show:
+        plt.show()
+    return fig, {"vmin": vmin, "vmax": vmax}
 
 
 def _input_window_array(example):

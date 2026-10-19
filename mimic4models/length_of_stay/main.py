@@ -1,11 +1,13 @@
 from __future__ import absolute_import
 from __future__ import print_function
+import random
 
 import numpy as np
 import argparse
 import os
 import imp
 import re
+import glob
 
 from mimic4models.length_of_stay import utils
 from mimic4benchmark.readers import LengthOfStayReader
@@ -18,6 +20,31 @@ from mimic4models import common_utils
 from keras.callbacks import ModelCheckpoint, CSVLogger
 
 
+def los_normalizer_pattern(normalizer_dir, timestep, imputation):
+    return os.path.join(
+        normalizer_dir,
+        'los_ts:{:.2f}_impute:{}_start:zero_masks:True_n:*.normalizer'.format(
+            float(timestep), imputation))
+
+
+def resolve_normalizer_state(normalizer_state, normalizer_dir, timestep, imputation):
+    if normalizer_state is not None:
+        return normalizer_state
+    if normalizer_dir is None:
+        legacy = 'los_ts{}.input_str_{}.start_time_zero.n5e4.normalizer'.format(
+            timestep, imputation)
+        return os.path.join(os.path.dirname(__file__), legacy)
+
+    pattern = los_normalizer_pattern(normalizer_dir, timestep, imputation)
+    matches = sorted(glob.glob(pattern))
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) == 0:
+        raise IOError('No length-of-stay normalizer found for pattern: {}'.format(pattern))
+    raise IOError('Multiple length-of-stay normalizers found for pattern: {}. Matches: {}'.format(
+        pattern, matches))
+
+
 parser = argparse.ArgumentParser()
 common_utils.add_common_arguments(parser)
 parser.add_argument('--deep_supervision', dest='deep_supervision', action='store_true')
@@ -28,11 +55,19 @@ parser.add_argument('--data', type=str, help='Path to the data of length-of-stay
                     default=os.path.join(os.path.dirname(__file__), '../../data/length-of-stay/'))
 parser.add_argument('--output_dir', type=str, help='Directory relative which all output files are stored',
                     default='.')
+parser.add_argument('--normalizer_dir', type=str, default=None,
+                    help='Directory containing length-of-stay normalizer states.')
+parser.add_argument('--seed', type=int, default=49297)
 args = parser.parse_args()
+
 print(args)
 
 import tensorflow as tf
 from keras import backend as K
+random.seed(args.seed)
+np.random.seed(args.seed)
+tf.set_random_seed(args.seed)
+
 config = tf.ConfigProto()
 config.gpu_options.allow_growth = True
 sess = tf.Session(config=config)
@@ -67,10 +102,11 @@ else:
 cont_channels = [i for (i, x) in enumerate(discretizer_header) if x.find("->") == -1]
 
 normalizer = Normalizer(fields=cont_channels)  # choose here which columns to standardize
-normalizer_state = args.normalizer_state
-if normalizer_state is None:
-    normalizer_state = 'los_ts{}.input_str_previous.start_time_zero.n5e4.normalizer'.format(args.timestep)
-    normalizer_state = os.path.join(os.path.dirname(__file__), normalizer_state)
+normalizer_state = resolve_normalizer_state(
+    args.normalizer_state, args.normalizer_dir, args.timestep, args.imputation)
+print("==> normalizer_state:", normalizer_state)
+if not os.path.exists(normalizer_state):
+    raise IOError('Normalizer state file does not exist: {}'.format(normalizer_state))
 normalizer.load_params(normalizer_state)
 
 args_dict = dict(args._get_kwargs())
@@ -83,12 +119,13 @@ args_dict['num_classes'] = (1 if args.partition == 'none' else 10)
 print("==> using model {}".format(args.network))
 model_module = imp.load_source(os.path.basename(args.network), args.network)
 model = model_module.Network(**args_dict)
-suffix = "{}.bs{}{}{}.ts{}.partition={}".format("" if not args.deep_supervision else ".dsup",
+suffix = "{}.bs{}{}{}.ts{}.partition={}.seed{}".format("" if not args.deep_supervision else ".dsup",
                                                 args.batch_size,
                                                 ".L1{}".format(args.l1) if args.l1 > 0 else "",
                                                 ".L2{}".format(args.l2) if args.l2 > 0 else "",
                                                 args.timestep,
-                                                args.partition)
+                                                args.partition,
+                                                args.seed)
 model.final_name = args.prefix + model.say_name() + suffix
 print("==> model.final_name:", model.final_name)
 
