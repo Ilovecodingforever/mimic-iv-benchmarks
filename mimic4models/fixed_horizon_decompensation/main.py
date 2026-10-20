@@ -111,6 +111,8 @@ def main():
         args.metadata_path = os.path.join(args.data, 'mortality_metadata.csv')
     if not args.print_stats and args.network is None:
         parser.error('--network is required unless --print_stats is used')
+    if args.use_raw_timestamps and not is_raw_timestep(args.timestep):
+        raise ValueError('--use_raw_timestamps requires --timestep 0')
     print(args)
 
     if args.print_stats:
@@ -137,9 +139,19 @@ def main():
     target_repl = args.target_repl_coef > 0.0 and args.mode == 'train'
     raw_mode = is_raw_timestep(args.timestep)
 
+    print('==> using model {}'.format(args.network))
+    model_module = imp.load_source(os.path.basename(args.network), args.network)
+    raw_uses_timestamps = raw_mode and bool(
+        getattr(model_module, 'USES_RAW_TIMESTAMPS', False))
+    if args.use_raw_timestamps and raw_uses_timestamps:
+        raise ValueError('--use_raw_timestamps is for raw LSTM inputs; GRU-D already uses Hours')
+    raw_uses_time_deltas = raw_mode and args.use_raw_timestamps
+
     train_reader = build_reader(args.data, 'train', args.horizon, args.metadata_path)
     if raw_mode:
-        representation = RawSequenceEncoder()
+        representation = RawSequenceEncoder(
+            include_timestamps=raw_uses_timestamps,
+            include_time_deltas=raw_uses_time_deltas)
         feature_header = representation.header()
         normalizer = RawObservedNormalizer(
             representation.continuous_value_fields(),
@@ -166,15 +178,16 @@ def main():
 
     args_dict = dict(args._get_kwargs())
     args_dict['header'] = feature_header
+    args_dict['input_dim'] = len(feature_header)
     args_dict['task'] = 'ihm'
     args_dict['target_repl'] = target_repl
-    model_module = imp.load_source(os.path.basename(args.network), args.network)
     model = model_module.Network(**args_dict)
-    model.final_name = '{}{}.h{}.bs{}{}{}.ts{}.seed{}'.format(
+    timestamp_suffix = '.td' if raw_mode and args.use_raw_timestamps else ''
+    model.final_name = '{}{}.h{}.bs{}{}{}.ts{}{}.seed{}'.format(
         args.prefix, model.say_name(), args.horizon, args.batch_size,
         '.L1{}'.format(args.l1) if args.l1 > 0 else '',
         '.L2{}'.format(args.l2) if args.l2 > 0 else '',
-        args.timestep, args.seed)
+        args.timestep, timestamp_suffix, args.seed)
     print('==> model.final_name:', model.final_name)
 
     optimizer_config = {

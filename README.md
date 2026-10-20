@@ -194,6 +194,10 @@ python -u -m mimic4models.in_hospital_mortality.main \
     --timestep 0 \
     --seed 0
 
+Raw LSTM runs preserve the original input features by default. Add
+`--use_raw_timestamps` to append the time since the previous input, measured
+in days; the first input in each sequence receives `0.0`.
+
 
 
 
@@ -325,6 +329,10 @@ python -m mimic4models.length_of_stay.main \
   --normalizer_dir "$NORM" \
   --data "$DATA" --output_dir "$OUT"
 ```
+
+To include inter-input time as an additional raw-LSTM feature, add
+`--use_raw_timestamps` to the training and test commands. This option requires
+`--timestep 0`.
 
 For test inference, pass the validation-selected checkpoint with
 `--load_state` and use the same `--timestep 0`, `--partition`, data, and

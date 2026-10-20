@@ -314,6 +314,9 @@ def main():
     if not args.print_stats and not args.print_raw_sequence_stats and args.network is None:
         parser.error('--network is required unless --print_stats or --print_raw_sequence_stats is used')
 
+    if args.use_raw_timestamps and not is_raw_timestep(args.timestep):
+        raise ValueError('--use_raw_timestamps requires --timestep 0')
+
     print(args)
 
     test_sampling_strategy, test_sampling_interval, test_sampling_seed = validate_all_sampling_args(args)
@@ -356,13 +359,18 @@ def main():
     print("==> using model {}".format(args.network))
     model_module = imp.load_source(os.path.basename(args.network), args.network)
     raw_uses_timestamps = raw_mode and bool(getattr(model_module, 'USES_RAW_TIMESTAMPS', False))
+    if args.use_raw_timestamps and raw_uses_timestamps:
+        raise ValueError('--use_raw_timestamps is for raw LSTM inputs; GRU-D already uses Hours')
+    raw_uses_time_deltas = raw_mode and args.use_raw_timestamps
 
     train_reader = build_reader(args.data, 'train', args.horizon)
     train_reader = maybe_wrap_reader(train_reader, args.sampling_strategy,
                                      args.sampling_interval, args.sampling_seed)
 
     if raw_mode:
-        representation = RawSequenceEncoder(include_timestamps=raw_uses_timestamps)
+        representation = RawSequenceEncoder(
+            include_timestamps=raw_uses_timestamps,
+            include_time_deltas=raw_uses_time_deltas)
         feature_header = representation.header()
         normalizer = RawObservedNormalizer(representation.continuous_value_fields(),
                                            representation.continuous_mask_fields())
@@ -388,6 +396,7 @@ def main():
 
     args_dict = dict(args._get_kwargs())
     args_dict['header'] = feature_header
+    args_dict['input_dim'] = len(feature_header)
     args_dict['task'] = 'ihm'
     args_dict['target_repl'] = target_repl
     args_dict['sampling_strategy'] = args.sampling_strategy
@@ -401,13 +410,15 @@ def main():
         sampling_suffix = ".sample{}.r{}".format(args.sampling_strategy, int(args.sampling_interval))
         if args.sampling_strategy == 'random_matched':
             sampling_suffix += ".sseed{}".format(args.sampling_seed)
-    suffix = ".h{}.bs{}{}{}.ts{}{}{}.seed{}".format(args.horizon,
+    timestamp_suffix = ".td" if raw_mode and args.use_raw_timestamps else ""
+    suffix = ".h{}.bs{}{}{}.ts{}{}{}{}.seed{}".format(args.horizon,
                                                        args.batch_size,
                                                        ".L1{}".format(args.l1) if args.l1 > 0 else "",
                                                        ".L2{}".format(args.l2) if args.l2 > 0 else "",
                                                        args.timestep,
                                                        sampling_suffix,
                                                        ".trc{}".format(args.target_repl_coef) if args.target_repl_coef > 0 else "",
+                                                       timestamp_suffix,
                                                        args.seed)
     model.final_name = args.prefix + model.say_name() + suffix
     print("==> model.final_name:", model.final_name)
