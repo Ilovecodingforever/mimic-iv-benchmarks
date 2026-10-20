@@ -325,7 +325,7 @@ def plot_exp2a_absolute_heatmaps(tables_by_task, metric, horizons, timesteps,
     else:
         vmin, vmax = 0.0, 1.0
 
-    cmap = copy(plt.get_cmap("viridis"))
+    cmap = copy(plt.get_cmap("Blues"))
     cmap.set_bad("lightgray")
     norm = Normalize(vmin=vmin, vmax=vmax)
     fig, axes = plt.subplots(1, len(task_order), figsize=(13, 5.5), squeeze=False)
@@ -367,8 +367,10 @@ def plot_exp2a_absolute_heatmaps(tables_by_task, metric, horizons, timesteps,
                 if np.isfinite(value):
                     label = "{:.3f}".format(value)
                     if n_seeds < expected_seed_count:
-                        label += "\\n(n={})".format(n_seeds)
-                    text_color = "white" if norm(value) > 0.55 else "black"
+                        label += "\n(n={})".format(n_seeds)
+                    red, green, blue, _ = cmap(norm(value))
+                    luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue
+                    text_color = "black" if luminance > 0.58 else "white"
                 else:
                     label, text_color = "N/A", "black"
                 ax.text(x, y, label, ha="center", va="center", color=text_color, fontsize=9)
