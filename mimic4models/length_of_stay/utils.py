@@ -3,10 +3,82 @@ from __future__ import print_function
 
 from mimic4models import metrics
 from mimic4models import common_utils
+from mimic4models.fixed_horizon_icu_exit.raw import RawBatchSequence
 import threading
 import os
 import numpy as np
 import random
+
+
+def _processed_los_labels(labels, partition):
+    if partition == 'log':
+        return np.asarray([metrics.get_bin_log(x, 10) for x in labels])
+    if partition == 'custom':
+        return np.asarray([metrics.get_bin_custom(x, 10) for x in labels])
+    if partition == 'none':
+        return np.asarray(labels, dtype=float)
+    raise ValueError('Unknown LOS partition {}'.format(partition))
+
+
+class RawBatchGen(object):
+    """LOS label adapter around the shared variable-length raw batcher."""
+
+    def __init__(self, sequences, labels, partition, batch_size, steps=None,
+                 shuffle=False, seed=None):
+        self.partition = partition
+        self.batch_size = int(batch_size)
+        self.shuffle = bool(shuffle)
+        self.raw_labels = np.asarray(labels)
+        processed_labels = _processed_los_labels(self.raw_labels, partition)
+        self.sequence = RawBatchSequence(
+            sequences, processed_labels, batch_size=self.batch_size,
+            shuffle=self.shuffle,
+            bucket_size=max(self.batch_size * 100, self.batch_size),
+            seed=seed, target_repl=False)
+        self.steps = len(self.sequence) if steps is None else int(steps)
+        if self.steps <= 0:
+            raise ValueError('Raw LOS batch count must be positive')
+        self._metric_sequence = RawBatchSequence(
+            sequences, processed_labels, batch_size=self.batch_size,
+            shuffle=False,
+            bucket_size=max(self.batch_size * 100, self.batch_size),
+            seed=seed, target_repl=False)
+        self._metric_cursor = 0
+
+    def __len__(self):
+        return self.steps
+
+    def __getitem__(self, batch_index):
+        return self.sequence[int(batch_index) % len(self.sequence)]
+
+    def print_diagnostics(self):
+        return self.sequence.print_diagnostics()
+
+    def iter_batches(self):
+        while True:
+            for batch_i in range(self.steps):
+                if batch_i and batch_i % len(self.sequence) == 0:
+                    self.sequence.on_epoch_end()
+                yield self.sequence[batch_i % len(self.sequence)]
+            self.sequence.on_epoch_end()
+
+    def next(self, return_y_true=False):
+        batch_i = self._metric_cursor % self.steps
+        self._metric_cursor += 1
+        if self._metric_cursor >= self.steps:
+            self._metric_cursor = 0
+        x_batch, y_batch = self._metric_sequence[batch_i % len(self._metric_sequence)]
+        if not return_y_true:
+            return x_batch, y_batch
+        indices = self._metric_sequence.batch_indices(
+            batch_i % len(self._metric_sequence))
+        return x_batch, y_batch, self.raw_labels[indices]
+
+    def __iter__(self):
+        return self.iter_batches()
+
+    def __next__(self):
+        return self.next()
 
 
 def preprocess_chunk(data, ts, discretizer, normalizer=None):

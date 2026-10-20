@@ -8,7 +8,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy.stats import t
-from sklearn.metrics import auc, brier_score_loss, precision_recall_curve, roc_auc_score
+from sklearn.metrics import (
+    auc, brier_score_loss, cohen_kappa_score, mean_absolute_error,
+    precision_recall_curve, roc_auc_score)
 
 try:
     from IPython.display import display
@@ -117,7 +119,10 @@ def validate_epoch_set(df, expected_epochs=DEFAULT_EXPECTED_EPOCHS):
     return len(epochs) == expected_epochs and epochs == expected
 
 
-def read_validation_log(log_path, only_complete=False, expected_epochs=DEFAULT_EXPECTED_EPOCHS):
+def read_validation_log(log_path, only_complete=False,
+                        expected_epochs=DEFAULT_EXPECTED_EPOCHS,
+                        selection_metric="val_auprc",
+                        required_metrics=("val_auprc", "val_auroc")):
     try:
         df = pd.read_csv(str(log_path), sep=";")
     except pd.errors.EmptyDataError:
@@ -129,29 +134,44 @@ def read_validation_log(log_path, only_complete=False, expected_epochs=DEFAULT_E
     if only_complete and not complete:
         return None
     valid = df.copy()
-    for col in ["epoch", "val_auprc", "val_auroc"]:
+    required_columns = ["epoch"] + list(required_metrics)
+    if any(col not in valid.columns for col in required_columns):
+        return None
+    for col in required_columns:
         valid[col] = pd.to_numeric(valid[col], errors="coerce")
-    valid = valid.dropna(subset=["epoch", "val_auprc", "val_auroc"])
+    valid = valid.dropna(subset=required_columns)
     if len(valid) == 0:
         return None
-    best_idx = valid["val_auprc"].idxmax()
+    if selection_metric not in valid.columns:
+        raise ValueError("Validation log is missing selection metric {}: {}".format(
+            selection_metric, log_path))
+    best_idx = valid[selection_metric].idxmax()
     best = valid.loc[best_idx]
     best_csv_epoch = int(best["epoch"])
-    return {
+    result = {
         "n_epochs": int(len(df)),
         "complete": bool(complete),
         "best_csv_epoch": best_csv_epoch,
         "selected_validation_epoch": best_csv_epoch,
         "checkpoint_epoch": best_csv_epoch + 1,
-        "validation_auprc": float(best["val_auprc"]),
-        "validation_auroc": float(best["val_auroc"]),
+        "validation_auprc": float(best["val_auprc"])
+        if "val_auprc" in best else np.nan,
+        "validation_auroc": float(best["val_auroc"])
+        if "val_auroc" in best else np.nan,
         # Backward-compatible aliases used by old notebook code.
         "best_val_epoch": best_csv_epoch,
-        "best_val_auprc": float(best["val_auprc"]),
-        "val_auroc_at_best_auprc": float(best["val_auroc"]),
-        "val_auprc": float(best["val_auprc"]),
-        "val_auroc": float(best["val_auroc"]),
+        "best_val_auprc": float(best["val_auprc"])
+        if "val_auprc" in best else np.nan,
+        "val_auroc_at_best_auprc": float(best["val_auroc"])
+        if "val_auroc" in best else np.nan,
+        "val_auprc": float(best["val_auprc"])
+        if "val_auprc" in best else np.nan,
+        "val_auroc": float(best["val_auroc"])
+        if "val_auroc" in best else np.nan,
     }
+    for metric in required_metrics:
+        result[metric] = float(best[metric])
+    return result
 
 
 def find_selected_checkpoint(log_path, csv_epoch):
@@ -794,6 +814,27 @@ def compute_prediction_metrics(path):
     }
 
 
+def compute_los_prediction_metrics(path):
+    """Compute LOS metrics using the benchmark's existing definitions."""
+    from mimic4models import metrics as los_metrics
+
+    df = pd.read_csv(str(path))
+    required = {"stay", "period_length", "prediction", "y_true"}
+    if not required.issubset(df.columns):
+        raise ValueError("LOS prediction file missing columns {}: {}".format(
+            required, path))
+    y_true = pd.to_numeric(df["y_true"], errors="raise").values.astype(float)
+    prediction = np.maximum(
+        pd.to_numeric(df["prediction"], errors="raise").values.astype(float), 0.0)
+    y_true_bins = [los_metrics.get_bin_custom(x, 10) for x in y_true]
+    prediction_bins = [los_metrics.get_bin_custom(x, 10) for x in prediction]
+    return {
+        "test_kappa": cohen_kappa_score(
+            y_true_bins, prediction_bins, weights="linear"),
+        "test_mad": mean_absolute_error(y_true, prediction),
+    }
+
+
 def test_metrics(df):
     y = df["y_true"].values
     pred = df["prediction"].values
@@ -819,7 +860,8 @@ def warn_incomplete_seed_sets(df, group_cols, seed_col="seed", expected_seeds=No
 
 
 def compute_seed_paired_drop(df, index_cols, resolution_col, reference_value, metric,
-                             seed_col="seed", drop_col="drop"):
+                             seed_col="seed", drop_col="drop",
+                             higher_is_better=True):
     join_cols = list(index_cols) + [seed_col]
     reference_col = "{}_reference".format(metric)
     ref = (
@@ -828,7 +870,10 @@ def compute_seed_paired_drop(df, index_cols, resolution_col, reference_value, me
     )
     base = df.drop([reference_col], axis=1) if reference_col in df.columns else df.copy()
     merged = base.merge(ref, on=join_cols, how="inner")
-    merged[drop_col] = merged[reference_col] - merged[metric]
+    if higher_is_better:
+        merged[drop_col] = merged[reference_col] - merged[metric]
+    else:
+        merged[drop_col] = merged[metric] - merged[reference_col]
     return merged
 
 

@@ -301,6 +301,39 @@ for seed in 0 1 2 3 4; do
 done
 
 
+### Raw/irregular length-of-stay
+
+Use `--timestep 0` with the raw LSTM to train on the original irregular
+observations. The raw normalizer is estimated from `train_listfile.csv` only:
+
+```bash
+DATA=/path/to/data/length-of-stay
+NORM=/path/to/normalizers
+OUT=/path/to/results/length-of-stay/raw
+
+python -m mimic4models.create_normalizer_state \
+  --task los \
+  --timestep 0 \
+  --data "$DATA" \
+  --output_dir "$NORM"
+
+python -m mimic4models.length_of_stay.main \
+  --network mimic4models/keras_models/raw_lstm.py \
+  --dim 16 --depth 2 --dropout 0.3 \
+  --batch_size 8 --epochs 100 --partition custom \
+  --seed 0 --timestep 0 --mode train \
+  --normalizer_dir "$NORM" \
+  --data "$DATA" --output_dir "$OUT"
+```
+
+For test inference, pass the validation-selected checkpoint with
+`--load_state` and use the same `--timestep 0`, `--partition`, data, and
+normalizer arguments. Raw LOS preserves each example's original prediction
+time and uses only observations available by that time. Raw deep supervision
+is intentionally unsupported; use the existing discretized path for that
+configuration.
+
+
 
 
 

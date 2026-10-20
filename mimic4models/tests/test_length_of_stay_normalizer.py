@@ -6,6 +6,8 @@ import os
 import shutil
 import tempfile
 
+from mimic4models.fixed_horizon_icu_exit.raw import is_raw_timestep
+
 
 def load_normalizer_helpers():
     path = os.path.join(
@@ -18,7 +20,10 @@ def load_normalizer_helpers():
             'batches_for_epoch_budget', 'los_normalizer_pattern',
             'resolve_normalizer_state')
     ]
-    namespace = {'glob': glob, 'os': os, '__file__': path}
+    namespace = {
+        'glob': glob, 'os': os, '__file__': path,
+        'is_raw_timestep': is_raw_timestep,
+    }
     exec(compile(tree, path, 'exec'), namespace)
     return (namespace['batches_for_epoch_budget'],
             namespace['los_normalizer_pattern'],
@@ -49,6 +54,8 @@ def test_length_of_stay_normalizer_dir_resolution():
             'los_ts1.0.input_str_previous.start_time_zero.n5e4.normalizer')
         assert pattern(normalizer_dir, 1.0, 'previous').endswith(
             'los_ts:1.00_impute:previous_start:zero_masks:True_n:*.normalizer')
+        assert pattern(normalizer_dir, 0.0, 'previous').endswith(
+            'los_raw_ts:0.00_observed_only_n:*.normalizer')
         explicit = os.path.join(root, 'explicit.normalizer')
         assert resolve(explicit, normalizer_dir, 1.0, 'previous') == explicit
 

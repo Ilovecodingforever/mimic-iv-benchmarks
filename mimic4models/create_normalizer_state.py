@@ -29,9 +29,10 @@ def validate_normalizer_args(args):
         raise ValueError('fixed_horizon_icu_exit normalizers require masks because the training '
                          'pipeline uses store_masks=True and the filename convention assumes masks:True')
     if is_raw_timestep(args.timestep) and args.task not in (
-            'fixed_horizon_icu_exit', 'fixed_horizon_decompensation', 'ihm', 'decomp'):
+            'fixed_horizon_icu_exit', 'fixed_horizon_decompensation', 'ihm',
+            'decomp', 'los'):
         raise ValueError('--timestep 0 raw mode is implemented only for ihm, decomp, '
-                         'fixed_horizon_icu_exit, and fixed_horizon_decompensation')
+                         'los, fixed_horizon_icu_exit, and fixed_horizon_decompensation')
 
 
 def main():
@@ -168,6 +169,10 @@ def main():
         file_name = os.path.join(
             args.output_dir,
             'decomp_raw_ts:0.00_observed_only_n:{}.normalizer'.format(n_samples))
+    elif args.task == 'los' and raw_mode:
+        file_name = os.path.join(
+            args.output_dir,
+            'los_raw_ts:0.00_observed_only_n:{}.normalizer'.format(n_samples))
     else:
         file_name = '{}_ts:{:.2f}_impute:{}_start:{}_masks:{}_n:{}.normalizer'.format(
             args.task, args.timestep, args.impute_strategy, args.start_time, args.store_masks, n_samples)

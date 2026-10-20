@@ -13,6 +13,9 @@ from mimic4models.length_of_stay import utils
 from mimic4benchmark.readers import LengthOfStayReader
 
 from mimic4models.preprocessing import Discretizer, Normalizer
+from mimic4models.fixed_horizon_icu_exit.raw import (
+    RawBatchSequence, RawObservedNormalizer, RawSequenceEncoder,
+    is_raw_timestep, load_raw_data_unpadded)
 from mimic4models import metrics
 from mimic4models import keras_utils
 from mimic4models import common_utils
@@ -35,6 +38,10 @@ def batches_for_epoch_budget(example_budget, batch_size, split_name):
 
 
 def los_normalizer_pattern(normalizer_dir, timestep, imputation):
+    if is_raw_timestep(timestep):
+        return os.path.join(
+            normalizer_dir,
+            'los_raw_ts:0.00_observed_only_n:*.normalizer')
     return os.path.join(
         normalizer_dir,
         'los_ts:{:.2f}_impute:{}_start:zero_masks:True_n:*.normalizer'.format(
@@ -76,6 +83,12 @@ args = parser.parse_args()
 
 print(args)
 
+raw_mode = is_raw_timestep(args.timestep)
+if args.use_raw_timestamps and not raw_mode:
+    raise ValueError('--use_raw_timestamps requires --timestep 0')
+if raw_mode and args.deep_supervision:
+    raise ValueError('timestep=0 raw mode is not supported with --deep_supervision for length_of_stay')
+
 import tensorflow as tf
 from keras import backend as K
 random.seed(args.seed)
@@ -90,7 +103,7 @@ K.set_session(sess)
 if args.small_part:
     args.save_every = 2**30
 
-# Build readers, discretizers, normalizers
+# Build readers, representations, and normalizers
 if args.deep_supervision:
     train_data_loader = common_utils.DeepSupervisionDataLoader(dataset_dir=os.path.join(args.data, 'train'),
                                                                listfile=os.path.join(args.data, 'train_listfile.csv'),
@@ -104,18 +117,26 @@ else:
     val_reader = LengthOfStayReader(dataset_dir=os.path.join(args.data, 'train'),
                                     listfile=os.path.join(args.data, 'val_listfile.csv'))
 
-discretizer = Discretizer(timestep=args.timestep,
-                          store_masks=True,
-                          impute_strategy='previous',
-                          start_time='zero')
-
-if args.deep_supervision:
-    discretizer_header = discretizer.transform(train_data_loader._data["X"][0])[1].split(',')
+if raw_mode:
+    representation = RawSequenceEncoder(include_time_deltas=args.use_raw_timestamps)
+    feature_header = representation.header()
+    normalizer = RawObservedNormalizer(
+        representation.continuous_value_fields(),
+        representation.continuous_mask_fields())
 else:
-    discretizer_header = discretizer.transform(train_reader.read_example(0)["X"])[1].split(',')
-cont_channels = [i for (i, x) in enumerate(discretizer_header) if x.find("->") == -1]
-
-normalizer = Normalizer(fields=cont_channels)  # choose here which columns to standardize
+    discretizer = Discretizer(timestep=args.timestep,
+                              store_masks=True,
+                              impute_strategy='previous',
+                              start_time='zero')
+    if args.deep_supervision:
+        feature_header = discretizer.transform(
+            train_data_loader._data["X"][0])[1].split(',')
+    else:
+        feature_header = discretizer.transform(
+            train_reader.read_example(0)["X"])[1].split(',')
+    cont_channels = [i for (i, x) in enumerate(feature_header)
+                     if x.find("->") == -1]
+    normalizer = Normalizer(fields=cont_channels)
 normalizer_state = resolve_normalizer_state(
     args.normalizer_state, args.normalizer_dir, args.timestep, args.imputation)
 print("==> normalizer_state:", normalizer_state)
@@ -124,7 +145,8 @@ if not os.path.exists(normalizer_state):
 normalizer.load_params(normalizer_state)
 
 args_dict = dict(args._get_kwargs())
-args_dict['header'] = discretizer_header
+args_dict['header'] = feature_header
+args_dict['input_dim'] = len(feature_header)
 args_dict['task'] = 'los'
 args_dict['num_classes'] = (1 if args.partition == 'none' else 10)
 
@@ -133,11 +155,13 @@ args_dict['num_classes'] = (1 if args.partition == 'none' else 10)
 print("==> using model {}".format(args.network))
 model_module = imp.load_source(os.path.basename(args.network), args.network)
 model = model_module.Network(**args_dict)
-suffix = "{}.bs{}{}{}.ts{}.partition={}.seed{}".format("" if not args.deep_supervision else ".dsup",
+timestamp_suffix = ".td" if raw_mode and args.use_raw_timestamps else ""
+suffix = "{}.bs{}{}{}.ts{}{}.partition={}.seed{}".format("" if not args.deep_supervision else ".dsup",
                                                 args.batch_size,
                                                 ".L1{}".format(args.l1) if args.l1 > 0 else "",
                                                 ".L2{}".format(args.l2) if args.l2 > 0 else "",
                                                 args.timestep,
+                                                timestamp_suffix,
                                                 args.partition,
                                                 args.seed)
 model.final_name = args.prefix + model.say_name() + suffix
@@ -176,6 +200,29 @@ if args.deep_supervision:
                                                    discretizer, normalizer, args.batch_size, shuffle=True)
     val_data_gen = utils.BatchGenDeepSupervision(val_data_loader, args.partition,
                                                  discretizer, normalizer, args.batch_size, shuffle=False)
+elif raw_mode:
+    if args.mode == 'train':
+        train_raw = load_raw_data_unpadded(
+            train_reader, representation, normalizer, args.small_part)
+        val_raw = load_raw_data_unpadded(
+            val_reader, representation, normalizer, args.small_part)
+        train_nbatches = batches_for_epoch_budget(
+            TRAIN_EXAMPLES_PER_EPOCH, args.batch_size, 'training')
+        val_nbatches = batches_for_epoch_budget(
+            VAL_EXAMPLES_PER_EPOCH, args.batch_size, 'validation')
+        if args.small_part:
+            train_nbatches = 40
+            val_nbatches = 40
+        train_data_gen = utils.RawBatchGen(
+            train_raw[0], train_raw[1], args.partition, args.batch_size,
+            steps=train_nbatches, shuffle=True, seed=args.seed)
+        val_data_gen = utils.RawBatchGen(
+            val_raw[0], val_raw[1], args.partition, args.batch_size,
+            steps=val_nbatches, shuffle=False, seed=args.seed)
+        train_data_gen.print_diagnostics()
+    else:
+        train_data_gen = None
+        val_data_gen = None
 else:
     # Set number of batches in one epoch
     train_nbatches = batches_for_epoch_budget(TRAIN_EXAMPLES_PER_EPOCH,
@@ -274,6 +321,33 @@ elif args.mode == 'test':
                     labels.append(t)
                     predictions.append(p)
                     names.append(name)
+    elif raw_mode:
+        del train_reader
+        del val_reader
+        test_reader = LengthOfStayReader(
+            dataset_dir=os.path.join(args.data, 'test'),
+            listfile=os.path.join(args.data, 'test_listfile.csv'))
+        ret = load_raw_data_unpadded(
+            test_reader, representation, normalizer, args.small_part,
+            return_names=True)
+        data = ret['data'][0]
+        labels = np.asarray(ret['data'][1])
+        names = list(ret['names'])
+        ts = list(ret['ts'])
+        test_data_gen = RawBatchSequence(
+            data, labels, batch_size=args.batch_size, shuffle=False,
+            bucket_size=max(args.batch_size * 100, args.batch_size),
+            target_repl=False)
+        predictions_by_index = [None] * len(data)
+        for batch_i in range(len(test_data_gen)):
+            print("predicting {} / {}".format(
+                batch_i, len(test_data_gen)), end='\r')
+            x_batch, _ = test_data_gen[batch_i]
+            batch_pred = model.predict_on_batch(x_batch)
+            for index, prediction in zip(
+                    test_data_gen.batch_indices(batch_i), batch_pred):
+                predictions_by_index[index] = prediction
+        predictions = predictions_by_index
     else:
         del train_reader
         del val_reader

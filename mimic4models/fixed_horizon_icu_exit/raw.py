@@ -35,11 +35,15 @@ class RawSequenceEncoder(object):
     """Encode original irregular rows as value features plus observation masks."""
 
     def __init__(self, config_path=os.path.join(os.path.dirname(__file__), '..', 'resources', 'discretizer_config.json'),
-                 include_timestamps=False):
+                 include_timestamps=False, include_time_deltas=False):
         with open(config_path) as f:
             config = json.load(f)
+        if include_timestamps and include_time_deltas:
+            raise ValueError('raw encoder cannot include Hours and time deltas together')
         self._include_timestamps = bool(include_timestamps)
+        self._include_time_deltas = bool(include_time_deltas)
         self._timestamp_name = 'Hours'
+        self._time_delta_name = 'TimeSincePreviousInputDays'
         self._id_to_channel = config['id_to_channel']
         self._channel_to_id = dict(zip(self._id_to_channel, range(len(self._id_to_channel))))
         self._is_categorical_channel = config['is_categorical_channel']
@@ -57,7 +61,8 @@ class RawSequenceEncoder(object):
         self._value_dim = cur_len
         self._mask_dim = len(self._id_to_channel)
         self._timestamp_pos = self._value_dim + self._mask_dim
-        self._feature_dim = self._timestamp_pos + (1 if self._include_timestamps else 0)
+        self._feature_dim = self._timestamp_pos + int(
+            self._include_timestamps or self._include_time_deltas)
         self._header = self._make_header()
 
     @property
@@ -97,6 +102,8 @@ class RawSequenceEncoder(object):
             names.append('mask->' + channel)
         if self._include_timestamps:
             names.append(self._timestamp_name)
+        if self._include_time_deltas:
+            names.append(self._time_delta_name)
         return names
 
     def _write_value(self, data, row_id, channel, value):
@@ -119,9 +126,17 @@ class RawSequenceEncoder(object):
                 continue
             rows.append(row)
         data = np.zeros((len(rows), self._feature_dim), dtype=np.float32)
+        previous_time = None
         for row_id, row in enumerate(rows):
+            current_time = float(row[0])
             if self._include_timestamps:
-                data[row_id, self._timestamp_pos] = float(row[0])
+                data[row_id, self._timestamp_pos] = current_time
+            elif self._include_time_deltas:
+                # ponytail: one scalar inter-input interval keeps the raw LSTM interface small;
+                # a learned time embedding can replace it if the benchmark needs richer timing.
+                data[row_id, self._timestamp_pos] = (
+                    0.0 if previous_time is None else (current_time - previous_time) / 24.0)
+            previous_time = current_time
             for col_id in range(1, len(row)):
                 value = row[col_id]
                 if value == '':
@@ -224,7 +239,7 @@ def load_raw_data_unpadded(reader, encoder, normalizer, small_part=False, return
     whole_data = (data, np.array(ret['y']))
     if not return_names:
         return whole_data
-    return {'data': whole_data, 'names': ret['name']}
+    return {'data': whole_data, 'names': ret['name'], 'ts': ret['t']}
 
 
 def load_raw_data(reader, encoder, normalizer, small_part=False, return_names=False):
@@ -233,7 +248,7 @@ def load_raw_data(reader, encoder, normalizer, small_part=False, return_names=Fa
     whole_data = (data, np.array(ret['y']))
     if not return_names:
         return whole_data
-    return {'data': whole_data, 'names': ret['name']}
+    return {'data': whole_data, 'names': ret['name'], 'ts': ret['t']}
 
 
 def pad_raw_batch(sequences, dtype=np.float32):

@@ -91,6 +91,8 @@ if args.small_part:
     args.save_every = 2**30
 
 raw_mode = is_raw_timestep(args.timestep)
+if args.use_raw_timestamps and not raw_mode:
+    raise ValueError('--use_raw_timestamps requires --timestep 0')
 if raw_mode and args.deep_supervision:
     raise ValueError('timestep=0 raw mode is not supported with --deep_supervision for decompensation')
 
@@ -109,7 +111,7 @@ else:
                                       listfile=os.path.join(args.data, 'val_listfile.csv'))
 
 if raw_mode:
-    representation = RawSequenceEncoder()
+    representation = RawSequenceEncoder(include_time_deltas=args.use_raw_timestamps)
     feature_header = representation.header()
     normalizer = RawObservedNormalizer(representation.continuous_value_fields(),
                                        representation.continuous_mask_fields())
@@ -131,6 +133,7 @@ normalizer.load_params(normalizer_state)
 
 args_dict = dict(args._get_kwargs())
 args_dict['header'] = feature_header
+args_dict['input_dim'] = len(feature_header)
 args_dict['task'] = 'decomp'
 
 
@@ -138,11 +141,13 @@ args_dict['task'] = 'decomp'
 print("==> using model {}".format(args.network))
 model_module = imp.load_source(os.path.basename(args.network), args.network)
 model = model_module.Network(**args_dict)
-suffix = "{}.bs{}{}{}.ts{}.seed{}".format("" if not args.deep_supervision else ".dsup",
+timestamp_suffix = ".td" if raw_mode and args.use_raw_timestamps else ""
+suffix = "{}.bs{}{}{}.ts{}{}.seed{}".format("" if not args.deep_supervision else ".dsup",
                                            args.batch_size,
                                            ".L1{}".format(args.l1) if args.l1 > 0 else "",
                                            ".L2{}".format(args.l2) if args.l2 > 0 else "",
                                            args.timestep,
+                                           timestamp_suffix,
                                            args.seed)
 model.final_name = args.prefix + model.say_name() + suffix
 print("==> model.final_name:", model.final_name)

@@ -100,6 +100,8 @@ if args.small_part:
     args.save_every = 2**30
 
 raw_mode = is_raw_timestep(args.timestep)
+if args.use_raw_timestamps and not raw_mode:
+    raise ValueError('--use_raw_timestamps requires --timestep 0')
 target_repl = (args.target_repl_coef > 0.0 and args.mode == 'train')
 
 # Build readers, discretizers, normalizers
@@ -112,7 +114,7 @@ val_reader = InHospitalMortalityReader(dataset_dir=os.path.join(args.data, 'trai
                                        period_length=48.0)
 
 if raw_mode:
-    representation = RawSequenceEncoder()
+    representation = RawSequenceEncoder(include_time_deltas=args.use_raw_timestamps)
     feature_header = representation.header()
     normalizer = RawObservedNormalizer(representation.continuous_value_fields(),
                                        representation.continuous_mask_fields())
@@ -132,6 +134,7 @@ normalizer.load_params(normalizer_state)
 
 args_dict = dict(args._get_kwargs())
 args_dict['header'] = feature_header
+args_dict['input_dim'] = len(feature_header)
 args_dict['task'] = 'ihm'
 args_dict['target_repl'] = target_repl
 
@@ -139,11 +142,13 @@ args_dict['target_repl'] = target_repl
 print("==> using model {}".format(args.network))
 model_module = imp.load_source(os.path.basename(args.network), args.network)
 model = model_module.Network(**args_dict)
-suffix = ".bs{}{}{}.ts{}{}.seed{}".format(args.batch_size,
+timestamp_suffix = ".td" if raw_mode and args.use_raw_timestamps else ""
+suffix = ".bs{}{}{}.ts{}{}{}.seed{}".format(args.batch_size,
                                              ".L1{}".format(args.l1) if args.l1 > 0 else "",
                                              ".L2{}".format(args.l2) if args.l2 > 0 else "",
                                              args.timestep,
                                              ".trc{}".format(args.target_repl_coef) if args.target_repl_coef > 0 else "",
+                                             timestamp_suffix,
                                              args.seed)
 model.final_name = args.prefix + model.say_name() + suffix
 print("==> model.final_name:", model.final_name)

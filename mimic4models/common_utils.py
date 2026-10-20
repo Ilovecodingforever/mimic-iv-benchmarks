@@ -97,6 +97,8 @@ def add_common_arguments(parser):
                         help='batch normalization')
     parser.add_argument('--timestep', type=float, default=1.0,
                         help="fixed timestep used in the dataset")
+    parser.add_argument('--use_raw_timestamps', action='store_true',
+                        help='append time since the previous raw input in days')
     parser.add_argument('--imputation', type=str, default='previous')
     parser.add_argument('--small_part', dest='small_part', action='store_true')
     parser.add_argument('--whole_data', dest='small_part', action='store_false')
