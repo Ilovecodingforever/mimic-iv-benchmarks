@@ -12,6 +12,7 @@ from mimic4models.keras_models.grud_layers import GRUD
 
 
 USES_RAW_TIMESTAMPS = True
+USES_RAW_GRUD = True
 RAW_TIMESTAMP_FIELD = 'Hours'
 
 

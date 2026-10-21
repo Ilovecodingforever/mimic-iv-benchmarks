@@ -288,6 +288,18 @@ done
 done
 
 
+for seed in 0 1 2 3 4; do
+python -u -m mimic4models.fixed_horizon_icu_exit.main \
+  --network mimic4models/keras_models/raw_transformer.py \
+  --transformer_positional_encoding timestamp \
+  --timestep 0 \
+  --dim 16 --depth 2 --dropout 0.3 \
+  --batch_size 8 --horizon 24 --seed "$seed" \
+  --mode train \
+  --data "$DATA" \
+  --normalizer_dir "$NORM" \
+  --output_dir "$OUT/transformer_timestamp"
+done
 
 
 DATA=/heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay
@@ -311,23 +323,27 @@ Use `--timestep 0` with the raw LSTM to train on the original irregular
 observations. The raw normalizer is estimated from `train_listfile.csv` only:
 
 ```bash
-DATA=/path/to/data/length-of-stay
-NORM=/path/to/normalizers
-OUT=/path/to/results/length-of-stay/raw
+DATA=/heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay
+NORM=/heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers
+OUT=/heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/length-of-stay/raw
 
 python -m mimic4models.create_normalizer_state \
   --task los \
   --timestep 0 \
   --data "$DATA" \
-  --output_dir "$NORM"
+  --output_dir "$NORM" \
+  --n_samples 100000
 
+
+for seed in 0 1 2 3 4; do
 python -m mimic4models.length_of_stay.main \
   --network mimic4models/keras_models/raw_lstm.py \
   --dim 16 --depth 2 --dropout 0.3 \
-  --batch_size 8 --epochs 100 --partition custom \
-  --seed 0 --timestep 0 --mode train \
+  --batch_size 320 --epochs 100 --partition custom \
+  --seed "$seed" --timestep 0 --mode train \
   --normalizer_dir "$NORM" \
   --data "$DATA" --output_dir "$OUT"
+done
 ```
 
 To include inter-input time as an additional raw-LSTM feature, add

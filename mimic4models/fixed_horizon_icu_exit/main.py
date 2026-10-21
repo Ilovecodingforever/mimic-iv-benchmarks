@@ -358,8 +358,17 @@ def main():
 
     print("==> using model {}".format(args.network))
     model_module = imp.load_source(os.path.basename(args.network), args.network)
+    is_raw_transformer = bool(getattr(model_module, 'IS_RAW_TRANSFORMER', False))
+    if is_raw_transformer and not raw_mode:
+        raise ValueError('raw Transformer requires --timestep 0')
+    if is_raw_transformer and args.use_raw_timestamps:
+        raise ValueError('--use_raw_timestamps is for raw LSTM inputs; '
+                         'raw Transformer timestamps use --transformer_positional_encoding')
     raw_uses_timestamps = raw_mode and bool(getattr(model_module, 'USES_RAW_TIMESTAMPS', False))
-    if args.use_raw_timestamps and raw_uses_timestamps:
+    if raw_uses_timestamps and bool(getattr(model_module, 'OPTIONAL_RAW_TIMESTAMPS', False)):
+        raw_uses_timestamps = args.transformer_positional_encoding == 'timestamp'
+    raw_uses_grud = raw_mode and bool(getattr(model_module, 'USES_RAW_GRUD', False))
+    if args.use_raw_timestamps and raw_uses_grud:
         raise ValueError('--use_raw_timestamps is for raw LSTM inputs; GRU-D already uses Hours')
     raw_uses_time_deltas = raw_mode and args.use_raw_timestamps
 
@@ -402,7 +411,7 @@ def main():
     args_dict['sampling_strategy'] = args.sampling_strategy
     args_dict['sampling_interval'] = args.sampling_interval
     args_dict['sampling_seed'] = args.sampling_seed
-    args_dict['raw_sequence_mask'] = raw_uses_timestamps
+    args_dict['raw_sequence_mask'] = raw_uses_grud
 
     model = model_module.Network(**args_dict)
     sampling_suffix = ""
@@ -453,7 +462,7 @@ def main():
         train_raw, val_raw = load_train_val_raw(train_reader, val_reader,
                                                 representation, normalizer, args.small_part,
                                                 raw_mode=raw_mode)
-        if raw_mode and raw_uses_timestamps:
+        if raw_mode and raw_uses_grud:
             check_raw_grud_real_row_masks(model_module, train_raw[0], feature_header, 'train')
             check_raw_grud_real_row_masks(model_module, val_raw[0], feature_header, 'validation')
         raw_prepare_input = None
@@ -549,7 +558,7 @@ def main():
         labels = ret["data"][1]
         names = ret["names"]
 
-        if raw_mode and raw_uses_timestamps:
+        if raw_mode and raw_uses_grud:
             check_raw_grud_real_row_masks(model_module, data, feature_header, 'test')
 
         if raw_mode:

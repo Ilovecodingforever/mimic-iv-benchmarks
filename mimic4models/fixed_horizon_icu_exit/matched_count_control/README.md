@@ -53,6 +53,57 @@ Counts are matched per patient and per variable, not just globally.
 
 Randomness is deterministic from `sampling_seed`, stay name, sampling interval, and variable name. It is independent of the model seed, so model seeds 0 through 4 see the same randomly thinned dataset when `sampling_seed` is unchanged.
 
+## Raw timestamp-aware Transformer
+
+The raw Transformer provides two parameter-matched temporal representations for
+Experiment 3E. Both use the original irregular raw rows and the 76 clinical
+value/mask features. The timestamp variant additionally receives the preserved
+`Hours` column only for fixed sinusoidal positional encoding; the index variant
+uses token positions `0, 1, ...` instead.
+
+The measured parameter counts are:
+
+| Model | Parameters |
+| --- | ---: |
+| Raw LSTM (`dim=16`, `depth=2`) | 7,633 |
+| Raw GRU-D (`dim=16`, `depth=1`) | 7,575 |
+| Raw Transformer, timestamp PE | 7,521 |
+| Raw Transformer, index PE | 7,521 |
+
+The Transformer is 1.5% below the LSTM and 0.7% below GRU-D. Positional
+encodings add no trainable parameters. Frequency sampling is applied before
+encoding, so retained rows keep their original timestamps.
+
+Train the timestamp-PE baseline:
+
+```bash
+python -u -m mimic4models.fixed_horizon_icu_exit.main \
+  --network mimic4models/keras_models/raw_transformer.py \
+  --transformer_positional_encoding timestamp \
+  --timestep 0 --dim 16 --depth 2 --dropout 0.3 --batch_size 8 \
+  --horizon 12 --seed 0 --mode train \
+  --sampling_strategy structured --sampling_interval 4 \
+  --data "$DATA" --normalizer_dir "$NORM" --output_dir "$OUT/transformer_timestamp"
+```
+
+For the index-PE ablation, use the same command with
+`--transformer_positional_encoding index` and a different output directory:
+
+```bash
+python -u -m mimic4models.fixed_horizon_icu_exit.main \
+  --network mimic4models/keras_models/raw_transformer.py \
+  --transformer_positional_encoding index \
+  --timestep 0 --dim 16 --depth 2 --dropout 0.3 --batch_size 8 \
+  --horizon 12 --seed 0 --mode train \
+  --sampling_strategy structured --sampling_interval 4 \
+  --data "$DATA" --normalizer_dir "$NORM" --output_dir "$OUT/transformer_index"
+```
+
+For testing, pass the selected checkpoint with `--mode test`, retain
+`--timestep 0`, and use the same positional-encoding option used during
+training. The model name includes `pe_timestamp` or `pe_index`, so the two
+variants cannot overwrite each other's checkpoints, logs, or predictions.
+
 ## Training integration
 
 The existing fixed-horizon ICU-exit training pipeline is reused. The sampler is a reader wrapper placed before the existing 1h discretizer:
