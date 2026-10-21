@@ -252,6 +252,10 @@ class Network(Model):
                 name='transformer_block_{}'.format(layer_i + 1))([values, valid])
         pooled = MaskedMeanPooling(name='masked_mean')([values, valid])
         output = Dense(1, activation='sigmoid', name='prediction')(pooled)
+        if self.dropout > 0.0:
+            # ponytail: legacy Keras does not propagate this marker through
+            # custom-layer math, so mark the model output once for all drops.
+            output._uses_learning_phase = True
         super(Network, self).__init__(inputs=inputs, outputs=[output])
 
     def say_name(self):

@@ -294,7 +294,7 @@ python -u -m mimic4models.fixed_horizon_icu_exit.main \
   --transformer_positional_encoding timestamp \
   --timestep 0 \
   --dim 16 --depth 2 --dropout 0.3 \
-  --batch_size 8 --horizon 24 --seed "$seed" \
+  --batch_size 8 --horizon 12 --seed "$seed" \
   --mode train \
   --data "$DATA" \
   --normalizer_dir "$NORM" \

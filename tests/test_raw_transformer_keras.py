@@ -96,6 +96,13 @@ class RawTransformerKerasTests(unittest.TestCase):
         self.assertEqual(model.predict(prepare_input(batch, self.header), verbose=0).shape,
                          (2, 1))
 
+    def test_prediction_with_dropout_uses_inference_learning_phase(self):
+        model = self._model('timestamp', dropout=0.3)
+        sequence = self._timestamp_sequence([0.0, 2.5], [70.0, 71.0])
+        prediction = model.predict(
+            prepare_input(sequence[None, :, :], self.header), verbose=0)
+        self.assertEqual(prediction.shape, (1, 1))
+
     def test_padding_is_excluded_from_attention_and_pooling(self):
         model = self._model('timestamp', dropout=0.0)
         sequence = self._timestamp_sequence([0.0, 2.5, 8.0], [0.0, 71.0, 72.0])
