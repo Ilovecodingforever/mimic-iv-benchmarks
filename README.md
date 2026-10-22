@@ -638,3 +638,8 @@ python -m jupyter nbconvert --to notebook --execute --inplace \
 
 The runner skips complete conditions. Use `--force` only when intentionally retraining or regenerating a condition.
 
+Each feature condition also writes `feature_measurement_retention.csv` for train,
+validation, and test. It keeps raw nonempty-cell retention separate from
+model-visible retention: `original_observed_bins` and `retained_observed_bins`
+count observed masks after the fixed 1h discretizer, before imputation.
+

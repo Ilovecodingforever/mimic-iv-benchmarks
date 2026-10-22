@@ -606,6 +606,11 @@ def test_feature_sampling_reader_statistics_report_measurement_and_patient_reten
     assert stats['original_observed_patients'] == 1
     assert stats['retained_observed_patients'] == 1
     assert stats['retained_observed_patient_fraction'] == 0.5
+    assert stats['original_observed_bins'] == 3
+    assert stats['retained_observed_bins'] == 2
+    assert stats['observed_bin_retention_fraction'] == 2.0 / 3.0
+    assert stats['original_binned_observed_patients'] == 1
+    assert stats['retained_binned_observed_patients'] == 1
 
 
 def run_all():

@@ -4,6 +4,7 @@ from __future__ import print_function
 import argparse
 import glob
 import os
+import re
 import subprocess
 import sys
 
@@ -19,6 +20,26 @@ FEATURES = ('Heart Rate', 'Mean blood pressure', 'Temperature', 'Glucose')
 INTERVALS = (1, 2, 4, 8, 12, 24)
 SEEDS = (0, 1, 2, 3, 4)
 HORIZONS = tuple(FixedHorizonIcuExitReader.VALID_HORIZONS)
+
+# Keep this explicit so the feature-frequency baseline cannot silently drift
+# from the Experiment 2A LSTM configuration.
+EXP2A_LSTM_CONFIG = {
+    'dim': 16,
+    'depth': 2,
+    'dropout': 0.3,
+    'rec_dropout': 0.0,
+    'batch_size': 8,
+    'optimizer': 'adam',
+    'lr': 0.001,
+    'beta_1': 0.9,
+    'l1': 0.0,
+    'l2': 0.0,
+    'target_repl_coef': 0.0,
+    'imputation': 'previous',
+    'prefix': '',
+    'timestep': 1.0,
+    'save_every': 1,
+}
 
 
 def condition_dir(output_root, horizon, feature_name, interval):
@@ -43,12 +64,25 @@ def build_command(python, mode, data_dir, normalizer_dir, output_dir,
                   horizon, seed, feature_name, interval, epochs=100):
     command = [python, '-m', 'mimic4models.fixed_horizon_icu_exit.main',
                '--network', 'mimic4models/keras_models/lstm.py',
-               '--dim', '16', '--depth', '2', '--dropout', '0.3',
-               '--rec_dropout', '0.0', '--batch_size', '8',
+               '--dim', str(EXP2A_LSTM_CONFIG['dim']),
+               '--depth', str(EXP2A_LSTM_CONFIG['depth']),
+               '--dropout', str(EXP2A_LSTM_CONFIG['dropout']),
+               '--rec_dropout', str(EXP2A_LSTM_CONFIG['rec_dropout']),
+               '--batch_size', str(EXP2A_LSTM_CONFIG['batch_size']),
                '--epochs', str(epochs), '--mode', mode,
-               '--timestep', '1', '--horizon', str(horizon), '--seed', str(seed),
+               '--timestep', str(EXP2A_LSTM_CONFIG['timestep']),
+               '--save_every', str(EXP2A_LSTM_CONFIG['save_every']),
+               '--horizon', str(horizon), '--seed', str(seed),
                '--data', data_dir, '--normalizer_dir', normalizer_dir,
                '--output_dir', output_dir, '--imputation', 'previous',
+               '--optimizer', EXP2A_LSTM_CONFIG['optimizer'],
+               '--lr', str(EXP2A_LSTM_CONFIG['lr']),
+               '--beta_1', str(EXP2A_LSTM_CONFIG['beta_1']),
+               '--l1', str(EXP2A_LSTM_CONFIG['l1']),
+               '--l2', str(EXP2A_LSTM_CONFIG['l2']),
+               '--target_repl_coef', str(EXP2A_LSTM_CONFIG['target_repl_coef']),
+               '--prefix', EXP2A_LSTM_CONFIG['prefix'],
+               '--sampling_strategy', 'none',
                '--feature_name', feature_name,
                '--feature_sampling_interval', str(interval)]
     return command
@@ -74,20 +108,32 @@ def ensure_normalizer(python, data_dir, normalizer_dir, horizon,
 
 
 def _run_log(output_dir, seed):
-    paths = sorted(os.path.join(output_dir, 'keras_logs', name)
-                   for name in os.listdir(os.path.join(output_dir, 'keras_logs'))
-                   if name.startswith('k_lstm') and '.seed{}'.format(seed) in name
-                   and name.endswith('.csv'))
+    log_dir = os.path.join(output_dir, 'keras_logs')
+    if not os.path.isdir(log_dir):
+        return None
+    pattern = re.compile(r'^k_lstm.*\.seed{}\.csv$'.format(int(seed)))
+    paths = sorted(os.path.join(log_dir, name)
+                   for name in os.listdir(log_dir) if pattern.match(name))
     if len(paths) != 1:
         return None
     return paths[0]
 
 
 def _selected_checkpoint(log_path, expected_epochs=100):
-    frame = pd.read_csv(log_path, sep=';')
-    if len(frame) != expected_epochs or list(frame['epoch'].astype(int)) != list(range(expected_epochs)):
+    try:
+        frame = pd.read_csv(log_path, sep=';')
+    except (IOError, OSError, ValueError, pd.errors.ParserError):
         return None
-    valid = frame.dropna(subset=['val_auprc', 'val_auroc'])
+    required = {'epoch', 'val_auprc'}
+    if not required.issubset(frame.columns):
+        return None
+    try:
+        epochs = list(frame['epoch'].astype(int))
+    except (TypeError, ValueError):
+        return None
+    if len(frame) != expected_epochs or epochs != list(range(expected_epochs)):
+        return None
+    valid = frame.dropna(subset=['val_auprc'])
     if len(valid) == 0:
         return None
     epoch = int(valid.loc[valid['val_auprc'].idxmax(), 'epoch']) + 1
@@ -141,8 +187,12 @@ def run_condition(args, horizon, seed, feature_name, interval):
 
 
 def _examples(data_dir, split, horizon):
-    dataset_dir = os.path.join(data_dir, split)
-    listfile = os.path.join(data_dir, '{}_listfile.csv'.format(split))
+    if split == 'test':
+        dataset_dir = os.path.join(data_dir, 'test')
+        listfile = os.path.join(data_dir, 'test_listfile.csv')
+    else:
+        dataset_dir = os.path.join(data_dir, 'train')
+        listfile = os.path.join(data_dir, '{}_listfile.csv'.format(split))
     reader = FixedHorizonIcuExitReader(
         dataset_dir=dataset_dir, listfile=listfile, horizon=horizon)
     for index in range(reader.get_number_of_examples()):

@@ -8,7 +8,7 @@ import random
 
 import numpy as np
 
-from mimic4models.preprocessing import DISCRETIZER_EPS, discretizer_bin_id
+from mimic4models.preprocessing import DISCRETIZER_EPS, Discretizer, discretizer_bin_id
 
 
 VALID_STRATEGIES = ('none', 'structured', 'random_matched')
@@ -205,13 +205,34 @@ def feature_measurement_count(X, header, feature_name, end=24.0):
                if float(row[0]) <= end + DISCRETIZER_EPS and row[feature_col] != '')
 
 
+def feature_observed_bin_count(X, header, feature_name, end=24.0,
+                               discretizer=None):
+    """Count observed 1h bins for one channel using the discretizer mask."""
+    discretizer = discretizer or Discretizer(
+        timestep=1.0, store_masks=True, impute_strategy='previous', start_time='zero')
+    data, discretized_header = discretizer.transform(X, header=header, end=end)
+    names = discretized_header.split(',')
+    mask_name = 'mask->{}'.format(feature_name)
+    try:
+        mask_col = names.index(mask_name)
+    except ValueError:
+        raise ValueError('{} is missing from discretizer output'.format(mask_name))
+    return int(np.sum(data[:, mask_col] > 0.0))
+
+
 def feature_sampling_statistics(examples, feature_name, sampling_interval):
     """Summarize raw measurement and patient retention for one split."""
     original_measurements = 0
     retained_measurements = 0
     original_patients = 0
     retained_patients = 0
+    original_observed_bins = 0
+    retained_observed_bins = 0
+    original_binned_patients = 0
+    retained_binned_patients = 0
     total_patients = 0
+    discretizer = Discretizer(
+        timestep=1.0, store_masks=True, impute_strategy='previous', start_time='zero')
     for example in examples:
         total_patients += 1
         original = feature_measurement_count(
@@ -220,10 +241,18 @@ def feature_sampling_statistics(examples, feature_name, sampling_interval):
             example, feature_name, sampling_interval)
         retained = feature_measurement_count(
             sampled['X'], sampled['header'], feature_name, sampled.get('t', 24.0))
+        original_bins = feature_observed_bin_count(
+            example['X'], example['header'], feature_name, example.get('t', 24.0), discretizer)
+        retained_bins = feature_observed_bin_count(
+            sampled['X'], sampled['header'], feature_name, sampled.get('t', 24.0), discretizer)
         original_measurements += original
         retained_measurements += retained
         original_patients += int(original > 0)
         retained_patients += int(retained > 0)
+        original_observed_bins += original_bins
+        retained_observed_bins += retained_bins
+        original_binned_patients += int(original_bins > 0)
+        retained_binned_patients += int(retained_bins > 0)
     return {
         'feature_name': feature_name,
         'feature_sampling_interval': int(sampling_interval),
@@ -241,6 +270,20 @@ def feature_sampling_statistics(examples, feature_name, sampling_interval):
             float(retained_patients) / total_patients if total_patients else np.nan),
         'retained_patient_fraction_of_original': (
             float(retained_patients) / original_patients if original_patients else np.nan),
+        'original_observed_bins': original_observed_bins,
+        'retained_observed_bins': retained_observed_bins,
+        'observed_bin_retention_fraction': (
+            float(retained_observed_bins) / original_observed_bins
+            if original_observed_bins else np.nan),
+        'original_binned_observed_patients': original_binned_patients,
+        'original_binned_observed_patient_fraction': (
+            float(original_binned_patients) / total_patients if total_patients else np.nan),
+        'retained_binned_observed_patients': retained_binned_patients,
+        'retained_binned_observed_patient_fraction': (
+            float(retained_binned_patients) / total_patients if total_patients else np.nan),
+        'retained_binned_patient_fraction_of_original': (
+            float(retained_binned_patients) / original_binned_patients
+            if original_binned_patients else np.nan),
     }
 
 
