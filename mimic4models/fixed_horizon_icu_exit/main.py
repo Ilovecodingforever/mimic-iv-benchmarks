@@ -17,7 +17,8 @@ from mimic4models.fixed_horizon_icu_exit.raw import (
     RawBatchSequence, RawObservedNormalizer, RawSequenceEncoder, is_raw_timestep,
     load_raw_data, load_raw_data_unpadded, print_raw_sequence_length_stats)
 from mimic4models.fixed_horizon_icu_exit.matched_count_control.sampling import (
-    DEFAULT_SAMPLING_SEED, SamplingReader, validate_sampling_args)
+    DEFAULT_SAMPLING_SEED, FeatureSamplingReader, SamplingReader,
+    feature_name_slug, validate_feature_sampling_args, validate_sampling_args)
 
 
 HORIZONS = FixedHorizonIcuExitReader.VALID_HORIZONS
@@ -55,7 +56,18 @@ def validate_data(data_dir):
 def default_normalizer_state_path(normalizer_dir, timestep, imputation, n_examples,
                                   sampling_strategy='none', sampling_interval=None,
                                   sampling_seed=DEFAULT_SAMPLING_SEED,
-                                  task_name='fixed_horizon_icu_exit'):
+                                  task_name='fixed_horizon_icu_exit',
+                                  feature_name='none', feature_sampling_interval=1):
+    if feature_name not in (None, '', 'none'):
+        validate_feature_sampling_args(feature_name, feature_sampling_interval, timestep)
+        if sampling_strategy != 'none':
+            raise ValueError('feature-specific sampling cannot be combined with whole-feature sampling')
+        if int(feature_sampling_interval) != 1:
+            return os.path.join(
+                normalizer_dir,
+                '{}_feature:{}_r:{}_ts:{:.2f}_impute:{}_start:zero_masks:True_n:{}.normalizer'.format(
+                    task_name, feature_name_slug(feature_name), int(feature_sampling_interval),
+                    float(timestep), imputation, n_examples))
     if is_raw_timestep(timestep):
         if sampling_strategy == 'none':
             file_name = '{}_raw_ts:0.00_observed_only_n:{}.normalizer'.format(
@@ -101,6 +113,12 @@ def maybe_wrap_reader(reader, sampling_strategy, sampling_interval, sampling_see
     return SamplingReader(reader, sampling_strategy, int(sampling_interval), sampling_seed)
 
 
+def maybe_wrap_feature_reader(reader, feature_name, feature_sampling_interval):
+    if feature_name in (None, '', 'none'):
+        return reader
+    return FeatureSamplingReader(reader, feature_name, int(feature_sampling_interval))
+
+
 def resolve_test_sampling_regime(sampling_strategy, sampling_interval, sampling_seed,
                                  test_sampling_strategy=None,
                                  test_sampling_interval=None,
@@ -120,7 +138,14 @@ def resolve_test_sampling_args(args):
 
 def validate_all_sampling_args(args):
     validate_sampling_args(args.sampling_strategy, args.sampling_interval, args.timestep)
+    feature_name = getattr(args, 'feature_name', 'none')
+    feature_sampling_interval = getattr(args, 'feature_sampling_interval', 1.0)
+    validate_feature_sampling_args(feature_name, feature_sampling_interval, args.timestep)
+    if feature_name not in (None, '', 'none') and args.sampling_strategy != 'none':
+        raise ValueError('feature-specific sampling cannot be combined with whole-feature sampling')
     test_sampling_strategy, test_sampling_interval, test_sampling_seed = resolve_test_sampling_args(args)
+    if feature_name not in (None, '', 'none') and test_sampling_strategy != 'none':
+        raise ValueError('feature-specific sampling cannot be combined with whole-feature test sampling')
     validate_sampling_args(test_sampling_strategy, test_sampling_interval, args.timestep)
     return test_sampling_strategy, test_sampling_interval, test_sampling_seed
 
@@ -293,6 +318,10 @@ def main():
                         help='Coarse interval used only for measurement selection.')
     parser.add_argument('--sampling_seed', type=int, default=DEFAULT_SAMPLING_SEED,
                         help='Seed for random matched-count sampling; independent of model seed.')
+    parser.add_argument('--feature_name', type=str, default='none',
+                        help='Optional channel for feature-specific structured sampling.')
+    parser.add_argument('--feature_sampling_interval', type=float, default=1.0,
+                        help='Feature-specific sampling interval in hours.')
     parser.add_argument('--test_sampling_strategy', type=str, default=None,
                         choices=['none', 'structured', 'random_matched'],
                         help='Test/deployment sampling intervention. Defaults to --sampling_strategy.')
@@ -375,6 +404,8 @@ def main():
     train_reader = build_reader(args.data, 'train', args.horizon)
     train_reader = maybe_wrap_reader(train_reader, args.sampling_strategy,
                                      args.sampling_interval, args.sampling_seed)
+    train_reader = maybe_wrap_feature_reader(
+        train_reader, args.feature_name, args.feature_sampling_interval)
 
     if raw_mode:
         representation = RawSequenceEncoder(
@@ -399,6 +430,13 @@ def main():
             args.normalizer_dir, args.timestep, args.imputation,
             train_reader.get_number_of_examples(), args.sampling_strategy,
             args.sampling_interval, args.sampling_seed)
+        if args.feature_name not in (None, '', 'none'):
+            normalizer_state = default_normalizer_state_path(
+                args.normalizer_dir, args.timestep, args.imputation,
+                train_reader.get_number_of_examples(), args.sampling_strategy,
+                args.sampling_interval, args.sampling_seed,
+                feature_name=args.feature_name,
+                feature_sampling_interval=args.feature_sampling_interval)
     if not os.path.exists(normalizer_state):
         raise IOError('Normalizer state file does not exist: {}'.format(normalizer_state))
     normalizer.load_params(normalizer_state)
@@ -422,7 +460,9 @@ def main():
         if args.sampling_strategy == 'random_matched':
             sampling_suffix += ".sseed{}".format(args.sampling_seed)
     timestamp_suffix = ".td" if raw_mode and args.use_raw_timestamps else ""
-    suffix = ".h{}.bs{}{}{}.ts{}{}{}{}.seed{}".format(args.horizon,
+    feature_suffix = '' if args.feature_name in (None, '', 'none') else ".feature-{}-r{}".format(
+        feature_name_slug(args.feature_name), int(args.feature_sampling_interval))
+    suffix = ".h{}.bs{}{}{}.ts{}{}{}{}{}.seed{}".format(args.horizon,
                                                        args.batch_size,
                                                        ".L1{}".format(args.l1) if args.l1 > 0 else "",
                                                        ".L2{}".format(args.l2) if args.l2 > 0 else "",
@@ -430,6 +470,7 @@ def main():
                                                        sampling_suffix,
                                                        ".trc{}".format(args.target_repl_coef) if args.target_repl_coef > 0 else "",
                                                        timestamp_suffix,
+                                                       feature_suffix,
                                                        args.seed)
     model.final_name = args.prefix + model.say_name() + suffix
     print("==> model.final_name:", model.final_name)
@@ -461,6 +502,8 @@ def main():
         val_reader = build_reader(args.data, 'val', args.horizon)
         val_reader = maybe_wrap_reader(val_reader, args.sampling_strategy,
                                        args.sampling_interval, args.sampling_seed)
+        val_reader = maybe_wrap_feature_reader(
+            val_reader, args.feature_name, args.feature_sampling_interval)
         train_raw, val_raw = load_train_val_raw(train_reader, val_reader,
                                                 representation, normalizer, args.small_part,
                                                 raw_mode=raw_mode)
@@ -553,6 +596,8 @@ def main():
         test_reader = build_reader(args.data, 'test', args.horizon)
         test_reader = maybe_wrap_reader(test_reader, test_sampling_strategy,
                                         test_sampling_interval, test_sampling_seed)
+        test_reader = maybe_wrap_feature_reader(
+            test_reader, args.feature_name, args.feature_sampling_interval)
         ret = load_test_raw(test_reader, representation, normalizer, args.small_part,
                             raw_mode=raw_mode)
 

@@ -19,10 +19,12 @@ from mimic4models.fixed_horizon_icu_exit.raw import RawObservedNormalizer, RawSe
 from mimic4models.fixed_horizon_icu_exit.matched_count_control.validate_sampling import (
     structured_vs_coarse_value_mismatches)
 from mimic4models.fixed_horizon_icu_exit.matched_count_control.sampling import (
-    apply_sampling_to_example, cell_counts_by_channel, choose_matched_candidates,
-    mask_counts_by_channel, nonempty_cell_count, random_matched_cells, random_matched_sample,
-    reconstruct_sparse_raw, select_last_raw_observation_per_bin, structured_cells,
-    structured_sample)
+    apply_feature_sampling_to_example, apply_sampling_to_example, cell_counts_by_channel,
+    choose_matched_candidates, feature_sampling_channels, feature_sampling_statistics,
+    feature_structured_sample, mask_counts_by_channel, nonempty_cell_count,
+    random_matched_cells, random_matched_sample, reconstruct_sparse_raw,
+    select_last_raw_observation_per_bin, structured_cells, structured_sample,
+    validate_feature_sampling_args)
 
 
 HEADER = ['Hours', 'Heart Rate', 'Glucose', 'pH']
@@ -532,6 +534,78 @@ def test_test_mode_loader_path_does_not_load_train_val_raw():
     test_block = main_source.split("elif args.mode == 'test':", 1)[1]
     assert 'load_train_val_raw' not in test_block
     assert 'load_test_raw' in test_block
+
+
+def test_feature_structured_sampling_preserves_other_channels_and_timestamps():
+    X = a([['0.5', '70', '100', ''], ['1.2', '71', '', ''],
+           ['2.1', '72', '110', '7.0'], ['5.0', '75', '', '']])
+    sampled, _ = feature_structured_sample(X, HEADER, 'Heart Rate', 2, end=24.0)
+    assert sampled.tolist() == [
+        ['0.5', '', '100', ''], ['1.2', '71', '', ''],
+        ['2.1', '72', '110', '7.0'], ['5.0', '75', '', '']]
+
+
+def test_feature_structured_sampling_r1_keeps_last_observation_per_1h_bin():
+    X = a([['0.2', '70', '', ''], ['0.8', '71', '', ''], ['1.1', '72', '', '']])
+    sampled, cells = feature_structured_sample(X, HEADER, 'Heart Rate', 1, end=24.0)
+    assert sampled.tolist() == [['0.8', '71', '', ''], ['1.1', '72', '', '']]
+    assert [cell['value'] for cell in cells] == ['71', '72']
+
+
+def test_feature_sampling_drops_rows_only_when_the_selected_value_was_the_last_cell():
+    X = a([['0.5', '70', '', ''], ['1.2', '71', '100', '']])
+    sampled, _ = feature_structured_sample(X, HEADER, 'Heart Rate', 4, end=24.0)
+    assert sampled.tolist() == [['1.2', '71', '100', '']]
+
+
+def test_feature_sampling_does_not_leak_removed_values_into_previous_imputation():
+    X = a([['0.5', '70', '', ''], ['1.2', '71', '', ''], ['4.2', '', '100', '']])
+    sampled, _ = feature_structured_sample(X, HEADER, 'Heart Rate', 2, end=24.0)
+    data, header = transformed(sampled, 1, HEADER, impute='previous')
+    assert data[0, col(header, 'Heart Rate')] != 70.0
+    assert data[1, col(header, 'Heart Rate')] == 71.0
+    assert mask_counts_by_channel(data, header)['Heart Rate'] == 1
+    assert data[1, col(header, 'mask->Heart Rate')] == 1.0
+
+
+def test_feature_sampling_accepts_all_configured_channels_and_valid_intervals():
+    expected = {'Heart Rate', 'Mean blood pressure', 'Temperature', 'Glucose'}
+    assert expected.issubset(set(feature_sampling_channels()))
+    for feature in expected:
+        for interval in (1, 2, 4, 8, 12, 24):
+            validate_feature_sampling_args(feature, interval, 1.0)
+    try:
+        validate_feature_sampling_args('not a channel', 4, 1.0)
+    except ValueError as exc:
+        assert 'repository channels' in str(exc)
+    else:
+        raise AssertionError('unknown feature was accepted')
+
+
+def test_feature_sampling_baseline_is_a_noop_and_preserves_example_metadata():
+    example = {'X': a([['1', '70', '', ''], ['5', '80', '', '']]),
+               't': 24.0, 'y': 1, 'header': HEADER, 'name': 'stay'}
+    baseline = apply_feature_sampling_to_example(example, 'none', 1)
+    assert baseline is example
+    assert baseline['y'] == 1 and baseline['name'] == 'stay'
+
+
+def test_feature_sampling_reader_statistics_report_measurement_and_patient_retention():
+    examples = [
+        {'X': a([['0.5', '70', '', ''], ['1.2', '71', '', ''],
+                ['4.2', '75', '', '']]), 'header': HEADER,
+         't': 24.0, 'name': 'a'},
+        {'X': a([['0.5', '', '100', '']]), 'header': HEADER,
+         't': 24.0, 'name': 'b'},
+    ]
+    stats = feature_sampling_statistics(examples, 'Heart Rate', 2)
+    assert stats['total_patients'] == 2
+    assert stats['original_measurements'] == 3
+    assert stats['retained_measurements'] == 2
+    assert stats['measurement_retention_fraction'] == 2.0 / 3.0
+    assert stats['original_observed_patients'] == 1
+    assert stats['retained_observed_patients'] == 1
+    assert stats['retained_observed_patient_fraction'] == 0.5
 
 
 def run_all():

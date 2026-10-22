@@ -603,3 +603,38 @@ LOS might need this change as well.
 
 Test evaluation is unchanged. Test mode already iterates over the full test set exactly once; changing `batch_size` only changes the number of inference batches, not which examples are evaluated.
 
+
+### Feature-specific measurement-frequency sensitivity
+
+The fixed-horizon ICU-exit feature-frequency runner keeps the downstream discretizer at `1h` and selectively thins one raw channel at a time. The shared `r=1` baseline is trained once per horizon and seed; its metrics are reused for every feature. The default feature set is `Heart Rate`, `Mean blood pressure`, `Temperature`, and `Glucose`, with intervals `1, 2, 4, 8, 12, 24` hours.
+
+Run the initial 12-hour grid:
+
+```bash
+DATA=/heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay
+NORM=/heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers
+OUT=/heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/feature_frequency
+
+python -u -m mimic4models.fixed_horizon_icu_exit.feature_frequency \
+  --data "$DATA" --normalizer_dir "$NORM" --output_root "$OUT" \
+  --horizon 12 --mode all
+```
+
+Run all supported horizons:
+
+```bash
+python -u -m mimic4models.fixed_horizon_icu_exit.feature_frequency \
+  --data "$DATA" --normalizer_dir "$NORM" --output_root "$OUT" \
+  --horizons 12 24 48 96 168 --mode all
+```
+
+Regenerate only the feature-frequency figures after runs and predictions exist:
+
+```bash
+FEATURE_FREQ_RESULTS_ROOT="$OUT" \
+python -m jupyter nbconvert --to notebook --execute --inplace \
+  visualizers/visualize_feature_frequency.ipynb
+```
+
+The runner skips complete conditions. Use `--force` only when intentionally retraining or regenerating a condition.
+

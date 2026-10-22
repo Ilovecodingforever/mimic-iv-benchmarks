@@ -2,6 +2,8 @@ from __future__ import absolute_import
 from __future__ import print_function
 
 import hashlib
+import json
+import os
 import random
 
 import numpy as np
@@ -11,7 +13,10 @@ from mimic4models.preprocessing import DISCRETIZER_EPS, discretizer_bin_id
 
 VALID_STRATEGIES = ('none', 'structured', 'random_matched')
 VALID_INTERVALS = (2, 4, 8)
+FEATURE_SAMPLING_INTERVALS = (1, 2, 4, 8, 12, 24)
 DEFAULT_SAMPLING_SEED = 100
+_DISCRETIZER_CONFIG = os.path.join(
+    os.path.dirname(__file__), '..', '..', 'resources', 'discretizer_config.json')
 
 
 def _as_rows(X):
@@ -97,6 +102,146 @@ def structured_cells(X, header, sampling_interval, end=24.0):
 def structured_sample(X, header, sampling_interval, end=24.0):
     cells = structured_cells(X, header, sampling_interval, end=end)
     return reconstruct_sparse_raw(X, header, cells), cells
+
+
+def feature_sampling_channels():
+    with open(_DISCRETIZER_CONFIG) as config_file:
+        return tuple(json.load(config_file)['id_to_channel'])
+
+
+def feature_name_slug(feature_name):
+    channels = feature_sampling_channels()
+    if feature_name not in channels:
+        raise ValueError('feature_name {} is not a repository channel'.format(feature_name))
+    channel_id = channels.index(feature_name)
+    safe_name = ''.join(char if char.isalnum() else '_' for char in feature_name).strip('_')
+    return '{}_{}'.format(channel_id, safe_name)
+
+
+def validate_feature_sampling_args(feature_name, sampling_interval, downstream_timestep):
+    if feature_name in (None, '', 'none'):
+        return
+    if feature_name not in feature_sampling_channels():
+        raise ValueError('feature_name must be one of the repository channels: {}'.format(
+            ', '.join(feature_sampling_channels())))
+    if int(sampling_interval) != sampling_interval or int(sampling_interval) not in FEATURE_SAMPLING_INTERVALS:
+        raise ValueError('feature_sampling_interval must be one of {}'.format(
+            ', '.join(map(str, FEATURE_SAMPLING_INTERVALS))))
+    if abs(float(downstream_timestep) - 1.0) > DISCRETIZER_EPS:
+        raise ValueError('feature-specific sampling requires downstream timestep=1.0; got {}'.format(
+            downstream_timestep))
+
+
+def _feature_column_id(header, feature_name):
+    if header[0] != 'Hours':
+        raise ValueError('feature sampling requires a raw header beginning with Hours')
+    try:
+        return list(header).index(feature_name)
+    except ValueError:
+        raise ValueError('feature_name {} is not present in the example header'.format(feature_name))
+
+
+def feature_structured_cells(X, header, feature_name, sampling_interval, end=24.0):
+    """Select only one channel using the existing structured sampling rule."""
+    feature_col = _feature_column_id(header, feature_name)
+    return [cell for cell in select_last_raw_observation_per_bin(
+        X, header, sampling_interval, end=end).values()
+            if cell['col_id'] == feature_col]
+
+
+def feature_structured_sample(X, header, feature_name, sampling_interval, end=24.0):
+    """Downsample one raw channel while preserving all other raw cells."""
+    feature_col = _feature_column_id(header, feature_name)
+    selected_cells = feature_structured_cells(
+        X, header, feature_name, sampling_interval, end=end)
+    selected_rows = set(cell['row_id'] for cell in selected_cells)
+    rows = _as_rows(X)
+    output = []
+    for row_id, row in enumerate(rows):
+        # ponytail: reuse last-observation-per-bin selection; this preserves the
+        # benchmark convention without adding a separate event-process model.
+        if float(row[0]) <= end + DISCRETIZER_EPS and row[feature_col] != '' and row_id not in selected_rows:
+            row[feature_col] = ''
+        if any(value != '' for value in row[1:]):
+            output.append(row)
+    if not output:
+        return np.empty((0, len(header)), dtype=object), []
+    return np.asarray(output, dtype=object), selected_cells
+
+
+def apply_feature_sampling_to_example(example, feature_name='none', sampling_interval=1):
+    if feature_name in (None, '', 'none') or int(sampling_interval) == 1:
+        return example
+    end = example.get('t', 24.0)
+    sampled, _ = feature_structured_sample(
+        example['X'], example['header'], feature_name, sampling_interval, end=end)
+    ret = dict(example)
+    ret['X'] = sampled
+    return ret
+
+
+class FeatureSamplingReader(object):
+    def __init__(self, reader, feature_name='none', sampling_interval=1):
+        validate_feature_sampling_args(feature_name, sampling_interval, 1.0)
+        self._reader = reader
+        self._feature_name = feature_name
+        self._sampling_interval = sampling_interval
+
+    def read_example(self, index):
+        return apply_feature_sampling_to_example(
+            self._reader.read_example(index), self._feature_name, self._sampling_interval)
+
+    def read_next(self):
+        return apply_feature_sampling_to_example(
+            self._reader.read_next(), self._feature_name, self._sampling_interval)
+
+    def __getattr__(self, name):
+        return getattr(self._reader, name)
+
+
+def feature_measurement_count(X, header, feature_name, end=24.0):
+    feature_col = _feature_column_id(header, feature_name)
+    return sum(1 for row in X
+               if float(row[0]) <= end + DISCRETIZER_EPS and row[feature_col] != '')
+
+
+def feature_sampling_statistics(examples, feature_name, sampling_interval):
+    """Summarize raw measurement and patient retention for one split."""
+    original_measurements = 0
+    retained_measurements = 0
+    original_patients = 0
+    retained_patients = 0
+    total_patients = 0
+    for example in examples:
+        total_patients += 1
+        original = feature_measurement_count(
+            example['X'], example['header'], feature_name, example.get('t', 24.0))
+        sampled = apply_feature_sampling_to_example(
+            example, feature_name, sampling_interval)
+        retained = feature_measurement_count(
+            sampled['X'], sampled['header'], feature_name, sampled.get('t', 24.0))
+        original_measurements += original
+        retained_measurements += retained
+        original_patients += int(original > 0)
+        retained_patients += int(retained > 0)
+    return {
+        'feature_name': feature_name,
+        'feature_sampling_interval': int(sampling_interval),
+        'total_patients': total_patients,
+        'original_measurements': original_measurements,
+        'retained_measurements': retained_measurements,
+        'measurement_retention_fraction': (
+            float(retained_measurements) / original_measurements
+            if original_measurements else np.nan),
+        'original_observed_patients': original_patients,
+        'original_observed_patient_fraction': (
+            float(original_patients) / total_patients if total_patients else np.nan),
+        'retained_observed_patients': retained_patients,
+        'retained_observed_patient_fraction': (
+            float(retained_patients) / total_patients if total_patients else np.nan),
+        'retained_patient_fraction_of_original': (
+            float(retained_patients) / original_patients if original_patients else np.nan),
+    }
 
 
 def _stable_seed(sampling_seed, stay_name, sampling_interval, channel):

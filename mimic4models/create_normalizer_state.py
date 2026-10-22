@@ -13,7 +13,8 @@ from mimic4models.fixed_horizon_icu_exit.raw import (
     RawObservedNormalizer, RawSequenceEncoder, is_raw_timestep)
 from mimic4models.fixed_horizon_icu_exit.main import default_normalizer_state_path
 from mimic4models.fixed_horizon_icu_exit.matched_count_control.sampling import (
-    DEFAULT_SAMPLING_SEED, SamplingReader, validate_sampling_args)
+    DEFAULT_SAMPLING_SEED, FeatureSamplingReader, SamplingReader,
+    validate_feature_sampling_args, validate_sampling_args)
 
 import os
 import argparse
@@ -21,6 +22,12 @@ import argparse
 
 def validate_normalizer_args(args):
     validate_sampling_args(args.sampling_strategy, args.sampling_interval, args.timestep)
+    feature_name = getattr(args, 'feature_name', 'none')
+    feature_sampling_interval = getattr(args, 'feature_sampling_interval', 1.0)
+    validate_feature_sampling_args(
+        feature_name, feature_sampling_interval, args.timestep)
+    if feature_name not in (None, '', 'none') and args.sampling_strategy != 'none':
+        raise ValueError('feature-specific sampling cannot be combined with whole-feature sampling')
     if args.sampling_strategy != 'none' and args.task != 'fixed_horizon_icu_exit':
         raise ValueError('matched-count sampling is only implemented for fixed_horizon_icu_exit')
     if args.sampling_strategy != 'none' and args.start_time != 'zero':
@@ -73,6 +80,10 @@ def main():
                         help='Coarse interval used only for measurement selection.')
     parser.add_argument('--sampling_seed', type=int, default=DEFAULT_SAMPLING_SEED,
                         help='Seed for random matched-count sampling; independent of model seed.')
+    parser.add_argument('--feature_name', type=str, default='none',
+                        help='Optional channel for feature-specific structured sampling.')
+    parser.add_argument('--feature_sampling_interval', type=float, default=1.0,
+                        help='Feature-specific sampling interval in hours.')
     parser.set_defaults(store_masks=True)
 
     args = parser.parse_args()
@@ -120,6 +131,9 @@ def main():
     if args.sampling_strategy != 'none':
         reader = SamplingReader(reader, args.sampling_strategy,
                                 int(args.sampling_interval), args.sampling_seed)
+    if args.feature_name not in (None, '', 'none'):
+        reader = FeatureSamplingReader(
+            reader, args.feature_name, int(args.feature_sampling_interval))
 
     raw_mode = is_raw_timestep(args.timestep)
     if raw_mode:
@@ -156,7 +170,9 @@ def main():
     if args.task == 'fixed_horizon_icu_exit':
         file_name = default_normalizer_state_path(
             args.output_dir, args.timestep, args.impute_strategy, n_samples,
-            args.sampling_strategy, args.sampling_interval, args.sampling_seed)
+            args.sampling_strategy, args.sampling_interval, args.sampling_seed,
+            feature_name=args.feature_name,
+            feature_sampling_interval=args.feature_sampling_interval)
     elif args.task == 'fixed_horizon_decompensation':
         file_name = default_normalizer_state_path(
             args.output_dir, args.timestep, args.impute_strategy, n_samples,
