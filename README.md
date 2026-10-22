@@ -606,9 +606,21 @@ Test evaluation is unchanged. Test mode already iterates over the full test set 
 
 ### Feature-specific measurement-frequency sensitivity
 
-The fixed-horizon ICU-exit feature-frequency runner keeps the downstream discretizer at `1h` and selectively thins one raw channel at a time. The shared `r=1` baseline is trained once per horizon and seed; its metrics are reused for every feature. The default feature set is `Heart Rate`, `Mean blood pressure`, `Temperature`, and `Glucose`, with intervals `1, 2, 4, 8, 12, 24` hours.
+The fixed-horizon ICU-exit feature-frequency runner keeps the downstream discretizer at `1h` and selectively thins one raw channel at a time. The shared `r=1` baseline is trained once per horizon and seed; its metrics are reused for every feature. The default feature set is `Heart Rate`, `Mean blood pressure`, `Temperature`, and `Glucose`, with intervals `1, 2, 4, 8, 12, 24` hours. modes: train, test, all
 
 Run the initial 12-hour grid:
+
+
+python -m mimic4models.fixed_horizon_icu_exit.feature_frequency \
+  --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay \
+  --normalizer_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers \
+  --output_root /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/feature_frequency \
+  --horizon 12 \
+  --features "Heart Rate" \
+  --intervals 24 \
+  --seeds 0 \
+  --mode all
+
 
 ```bash
 DATA=/heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay

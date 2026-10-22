@@ -136,9 +136,16 @@ def _selected_checkpoint(log_path, expected_epochs=100):
     valid = frame.dropna(subset=['val_auprc'])
     if len(valid) == 0:
         return None
-    epoch = int(valid.loc[valid['val_auprc'].idxmax(), 'epoch']) + 1
+    best_row = valid.loc[valid['val_auprc'].idxmax()]
+    epoch = int(best_row['epoch']) + 1
     state_dir = os.path.join(os.path.dirname(os.path.dirname(log_path)), 'keras_states')
-    pattern = '{}.epoch{}.test*.state'.format(os.path.splitext(os.path.basename(log_path))[0], epoch)
+    stem = os.path.splitext(os.path.basename(log_path))[0]
+    if os.path.isdir(state_dir) and 'val_loss' in best_row and pd.notna(best_row['val_loss']):
+        exact = os.path.join(state_dir, '{}.epoch{}.test{}.state'.format(
+            stem, epoch, best_row['val_loss']))
+        if os.path.isfile(exact):
+            return exact
+    pattern = '{}.epoch{}.test*.state'.format(stem, epoch)
     states = glob.glob(os.path.join(state_dir, pattern)) if os.path.isdir(state_dir) else []
     if len(states) != 1:
         return None

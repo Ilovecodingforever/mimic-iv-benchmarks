@@ -182,10 +182,13 @@ def test_runner_detects_complete_and_partial_artifacts_without_training():
     os.makedirs(states)
     log_name = 'k_lstm.n16.d0.3.dep2.bs8.ts1.0.seed0.csv'
     log_path = os.path.join(logs, log_name)
-    pd.DataFrame({'epoch': [0, 1, 2], 'val_auprc': [0.1, 0.3, 0.2]}).to_csv(
+    pd.DataFrame({'epoch': [0, 1, 2], 'val_auprc': [0.1, 0.3, 0.2],
+                  'val_loss': [0.8, 0.5, 0.7]}).to_csv(
         log_path, sep=';', index=False)
     checkpoint = os.path.join(states, log_name[:-4] + '.epoch2.test0.5.state')
     open(checkpoint, 'w').close()
+    duplicate = os.path.join(states, log_name[:-4] + '.epoch2.test0.6.state')
+    open(duplicate, 'w').close()
     old_ensure_normalizer = runner.ensure_normalizer
     old_check_call = runner.subprocess.check_call
     try:

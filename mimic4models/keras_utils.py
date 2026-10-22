@@ -1,6 +1,7 @@
 from __future__ import absolute_import
 from __future__ import print_function
 
+import errno
 import os
 import numpy as np
 from mimic4models import metrics
@@ -12,6 +13,20 @@ if K.backend() == 'tensorflow':
     import tensorflow as tf
 
 from keras.layers import Layer
+
+
+class StaleTolerantCSVLogger(keras.callbacks.CSVLogger):
+    """CSVLogger variant for network filesystems that stale on final close."""
+
+    def on_train_end(self, logs=None):
+        try:
+            super(StaleTolerantCSVLogger, self).on_train_end(logs)
+        except OSError as exc:
+            # ponytail: tolerate only a close-time ESTALE; write/flush errors still raise.
+            if getattr(exc, 'errno', None) != errno.ESTALE:
+                raise
+            print('WARNING: CSVLogger close saw ESTALE; training artifacts were retained.')
+            self.writer = None
 
 
 def patch_legacy_keras_h5py_attrs():

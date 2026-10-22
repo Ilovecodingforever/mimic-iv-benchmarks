@@ -365,7 +365,7 @@ def main():
         return
 
     import tensorflow as tf
-    from keras.callbacks import CSVLogger, ModelCheckpoint
+    from keras.callbacks import ModelCheckpoint
     from mimic4models import keras_utils
     from keras import backend as K
 
@@ -568,8 +568,9 @@ def main():
         keras_logs = os.path.join(args.output_dir, 'keras_logs')
         if not os.path.exists(keras_logs):
             os.makedirs(keras_logs)
-        csv_logger = CSVLogger(os.path.join(keras_logs, model.final_name + '.csv'),
-                               append=csv_append, separator=';')
+        csv_logger = keras_utils.StaleTolerantCSVLogger(
+            os.path.join(keras_logs, model.final_name + '.csv'),
+            append=csv_append, separator=';')
 
         print("==> training")
         if raw_mode:
