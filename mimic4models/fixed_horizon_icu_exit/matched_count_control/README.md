@@ -250,6 +250,47 @@ python -m mimic4models.fixed_horizon_icu_exit.main \
 
 
 
+for seed in 0 1 2 3 4; do
+python -m mimic4models.fixed_horizon_icu_exit.main \
+  --network mimic4models/keras_models/raw_lstm.py \
+  --mode train \
+  --timestep 0 \
+  --horizon 12 \
+  --sampling_strategy structured \
+  --sampling_interval 4 \
+  --dim 16 \
+  --depth 2 \
+  --dropout 0.3 \
+  --batch_size 8 \
+  --epochs 100 \
+  --seed 0 \
+  --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay \
+  --normalizer_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers \
+  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/fixed_horizon_icu_exit/structured/12h/4h \
+  --use_raw_timestamps
+done
+
+for seed in 0 1 2 3 4; do
+python -m mimic4models.fixed_horizon_icu_exit.main \
+  --network mimic4models/keras_models/raw_lstm.py \
+  --mode train \
+  --timestep 0 \
+  --horizon 12 \
+  --sampling_strategy none \
+  --dim 16 \
+  --depth 2 \
+  --dropout 0.3 \
+  --batch_size 8 \
+  --epochs 100 \
+  --seed 0 \
+  --data /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay \
+  --normalizer_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers \
+  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/fixed_horizon_icu_exit/structured/12h/4h \
+  --use_raw_timestamps
+done
+
+
+
 
 TODO: are results in summary viusalization all using test or val?
 describe the dataset and models

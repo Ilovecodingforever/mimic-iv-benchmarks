@@ -359,6 +359,26 @@ configuration.
 
 
 
+DATA=/path/to/fixed_horizon_icu_exit/data
+NORM=/path/to/normalizers
+OUT=/path/to/results
+
+python -u -m mimic4models.fixed_horizon_icu_exit.main \
+  --network mimic4models/keras_models/raw_transformer.py \
+  --transformer_positional_encoding timestamp \
+  --timestep 0 \
+  --dim 16 --depth 2 --dropout 0.3 \
+  --batch_size 8 --horizon 24 --seed 0 \
+  --mode train \
+  --data "$DATA" \
+  --normalizer_dir "$NORM" \
+  --output_dir "$OUT"
+
+
+--transformer_positional_encoding index
+--sampling_strategy structured --sampling_interval 4
+
+
 
 
 ## Fixed-horizon decompensation mortality / Experiment 2A
