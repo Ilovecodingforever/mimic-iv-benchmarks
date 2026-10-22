@@ -94,6 +94,7 @@ def test_fixed_horizon_runner_has_transformer_mode_validation():
     assert 'IS_RAW_TRANSFORMER' in source
     assert 'raw Transformer requires --timestep 0' in source
     assert '--use_raw_timestamps is for raw LSTM inputs' in source
+    assert "args_dict['positional_encoding'] = args.transformer_positional_encoding" in source
 
 
 if __name__ == '__main__':

@@ -406,6 +406,8 @@ def main():
     args_dict = dict(args._get_kwargs())
     args_dict['header'] = feature_header
     args_dict['input_dim'] = len(feature_header)
+    if is_raw_transformer:
+        args_dict['positional_encoding'] = args.transformer_positional_encoding
     args_dict['task'] = 'ihm'
     args_dict['target_repl'] = target_repl
     args_dict['sampling_strategy'] = args.sampling_strategy
