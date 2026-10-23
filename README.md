@@ -302,6 +302,21 @@ python -u -m mimic4models.fixed_horizon_icu_exit.main \
 done
 
 
+### Regenerate Experiment 3 result CSVs without training
+
+Experiment 3 run-level CSVs, including raw timestamp-aware Transformer and LSTM variants, can be rebuilt from existing logs, selected checkpoints, and test prediction files:
+
+```bash
+python -m visualizers.experiment3_results \
+  --results_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/fixed_horizon_icu_exit \
+  --output_dir /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/fixed_horizon_icu_exit/plots \
+  --horizons 12 96 \
+  --seeds 0 1 2 3 4
+```
+
+Missing predictions are reported in per-model `*_run_status.csv` files and are not assigned metrics. If checkpoint-only test inference is explicitly desired, add `--run-missing-inference --data DATA --normalizer_dir NORMALIZER_DIR`; this invokes test mode only and never retrains.
+
+
 DATA=/heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/data/length-of-stay
 NORM=/heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/normalizers
 OUT=/heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/length-of-stay
@@ -617,8 +632,8 @@ python -m mimic4models.fixed_horizon_icu_exit.feature_frequency \
   --output_root /heinz-georgenas/users/mingzhul/Simultaneous-EHR/data/physionet.org/files/mimiciv/1.0/russo/results/feature_frequency \
   --horizon 12 \
   --features "Heart Rate" \
-  --intervals 24 \
-  --seeds 0 \
+  --intervals 12 \
+  --seeds 0 1 2 3 4 \
   --mode all
 
 

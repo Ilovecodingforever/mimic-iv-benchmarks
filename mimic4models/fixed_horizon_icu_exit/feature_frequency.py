@@ -218,6 +218,10 @@ def write_retention_stats(args, horizon, feature_name, interval):
         rows.append(stats)
     path = os.path.join(condition_dir(args.output_root, horizon, feature_name, interval),
                         'feature_measurement_retention.csv')
+    # The shared r=1 baseline is stored separately, so no feature condition
+    # directory may have been created before its retention table is written.
+    if not os.path.isdir(os.path.dirname(path)):
+        os.makedirs(os.path.dirname(path))
     pd.DataFrame(rows).to_csv(path, index=False)
     return path
 

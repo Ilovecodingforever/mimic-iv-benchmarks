@@ -173,6 +173,26 @@ def test_validation_examples_use_train_directory_and_validation_listfile():
     assert calls == [('/data/train', '/data/val_listfile.csv', 12)]
 
 
+def test_retention_stats_create_feature_condition_directory():
+    root = tempfile.mkdtemp()
+    old_statistics = runner.feature_sampling_statistics
+    try:
+        runner.feature_sampling_statistics = lambda examples, feature, interval: {
+            'original_measurements': 1,
+            'retained_measurements': 1,
+        }
+        args = SimpleNamespace(data='/data', output_root=root)
+        path = runner.write_retention_stats(args, 12, 'Heart Rate', 1)
+        assert os.path.isfile(path)
+        assert path.endswith(os.path.join(
+            '12h', 'feature-8_Heart_Rate', 'r1',
+            'feature_measurement_retention.csv'))
+    finally:
+        runner.feature_sampling_statistics = old_statistics
+        import shutil
+        shutil.rmtree(root)
+
+
 def test_runner_detects_complete_and_partial_artifacts_without_training():
     root = tempfile.mkdtemp()
     output = os.path.join(root, '12h', 'baseline', 'r1')
